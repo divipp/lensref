@@ -95,7 +95,7 @@ data RefReader m a
 
 -- reference creator monad
 newtype RefCreator m a
-    = RefCreator { unRegister :: GlobalVars m -> m a }
+    = RefCreator { unRefCreator :: GlobalVars m -> m a }
 
 -- reference writer monad
 newtype instance RefWriterOf_ (RefReader m) a
@@ -113,7 +113,7 @@ type Handler m = RegionStatusChangeHandler m
 {-
 conv :: (NewRef m, Functor f) => RefHandler m a -> (a -> f (a -> RefCreator m a)) -> RefReader m (f (RefWriter m ()))
 conv r f = RefReader $ RefCreator $ \st ->
-        fmap (fmap (RefWriter . RefCreator . const)) $ runRefHandler r (fmap (\g -> flip unRegister st . g) . f)
+        fmap (fmap (RefWriter . RefCreator . const)) $ runRefHandler r (fmap (\g -> flip unRefCreator st . g) . f)
 -}
 
 newReference :: forall m a . NewRef m => GlobalVars m -> a -> m (RefHandler m a)
@@ -203,7 +203,7 @@ newReference st a0 = do
 
                 mapM_ addRev $ Map.elems ih
 
-                flip unRegister st $ tellHand $ \msg -> do
+                flip unRefCreator st $ tellHand $ \msg -> do
 
                     modRef' ori $ alive .= (msg == Unblock)
 
@@ -220,20 +220,20 @@ newReference st a0 = do
 joinRefHandler :: (NewRef m) => GlobalVars m -> RefReader m (RefHandler m a) -> RefHandler m a
 joinRefHandler _ (RefReaderTPure r) = r
 joinRefHandler st (RefReader m) = RefHandler $ \a -> do
-    ref <- flip unRegister st m
+    ref <- flip unRefCreator st m
     runRefHandler ref (Const . a) <&> \fm -> getConst fm <&> \reg init -> do
 
         -- TODO: don't do this on simple write
         r <- newReference st $ const $ pure ()
 
-        flip (registerTrigger r) True $ \kill -> flip unRegister st $ do
+        flip (registerTrigger r) True $ \kill -> flip unRefCreator st $ do
             runM kill Kill
             ref <- m
             fmap fst $ getHandler $ RefCreator $ \_st -> registerTrigger ref reg init
 
-        flip unRegister st $ tellHand $ \msg -> do
-            h <- flip unRegister st $ runRefReaderT $ readRef_ r
-            flip unRegister st $ runM h msg
+        flip unRefCreator st $ tellHand $ \msg -> do
+            h <- flip unRefCreator st $ runRefReaderT $ readRef_ r
+            flip unRefCreator st $ runM h msg
 
 
 registerTrigger :: NewRef m => RefHandler m a -> (a -> m a) -> Bool -> m ()
@@ -286,14 +286,14 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
         r <- RefCreator $ \st -> newReference st a0
         -- TODO: remove dropHandler?
         dropHandler $ RefCreator $ \st -> do
-            flip (registerTrigger r) True $ \a -> flip unRegister st $ runRefReaderT $ readRefSimple m <&> \b -> set k b a
-            flip (registerTrigger $ joinRefHandler st m) False $ \_ -> flip unRegister st $ runRefReaderT $ readRef_ r <&> (^. k)
+            flip (registerTrigger r) True $ \a -> flip unRefCreator st $ runRefReaderT $ readRefSimple m <&> \b -> set k b a
+            flip (registerTrigger $ joinRefHandler st m) False $ \_ -> flip unRefCreator st $ runRefReaderT $ readRef_ r <&> (^. k)
         return $ pure r
 
     onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
     onChange m f = RefCreator $ \st -> do
         r <- newReference st (const $ pure (), error "impossible #4")
-        flip (registerTrigger r) True $ \(h, _) -> flip unRegister st $ do
+        flip (registerTrigger r) True $ \(h, _) -> flip unRefCreator st $ do
             runM h Kill
             runRefReaderT m >>= getHandler . f
         return $ fmap snd $ readRef $ pure r
@@ -303,7 +303,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
 
     onChangeEq_ m f = RefCreator $ \st -> do
         r <- newReference st (const False, (const $ pure (), error "impossible #3"))
-        flip (registerTrigger r) True $ \it@(p, (h', _)) -> flip unRegister st $ do
+        flip (registerTrigger r) True $ \it@(p, (h', _)) -> flip unRefCreator st $ do
             a <- runRefReaderT m
             if p a
               then return it
@@ -317,7 +317,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
     onChangeMemo (RefReaderTPure a) f = fmap RefReaderTPure $ join $ f a
     onChangeMemo (RefReader mr) f = RefCreator $ \st -> do
         r <- newReference st ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
-        flip (registerTrigger r) True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> flip unRegister st $ do
+        flip (registerTrigger r) True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> flip unRefCreator st $ do
             let it = (p, (m'', h1''))
             a <- mr
             if p a
@@ -346,7 +346,7 @@ runRefCreator f = do
             <*> newRef' mempty
             <*> newRef' (return ())
             <*> newRef' 0
-    flip unRegister s $ f $ flip unRegister s . runRefWriterT
+    flip unRefCreator s $ f $ flip unRefCreator s . runRefWriterT
 
 -------------------- aux
 
@@ -368,7 +368,7 @@ tellHand h = RefCreator $ \st -> modRef' (_handlercollection st) $ modify $ \f m
 dropHandler :: NewRef m => RefCreator m a -> RefCreator m a
 dropHandler m = RefCreator $ \st -> do
     x <- readRef' $ _handlercollection st
-    a <- unRegister m st
+    a <- unRefCreator m st
     writeRef' (_handlercollection st) x
     return a
 
@@ -377,7 +377,7 @@ getHandler m = RefCreator $ \st -> do
     let r = _handlercollection st
     h' <- readRef' r
     writeRef' r $ const $ pure ()
-    a <- unRegister m st
+    a <- unRefCreator m st
     h <- readRef' r
     writeRef' r h'
     return (h, a)
@@ -413,7 +413,7 @@ instance Monad m => Monoid (RefCreator m ()) where
 
 instance Monad m => Monad (RefCreator m) where
     return = RefCreator . const . return
-    RefCreator m >>= f = RefCreator $ \r -> m r >>= \a -> unRegister (f a) r
+    RefCreator m >>= f = RefCreator $ \r -> m r >>= \a -> unRefCreator (f a) r
 
 instance Applicative m => Applicative (RefCreator m) where
     pure = RefCreator . const . pure
@@ -423,7 +423,7 @@ instance Functor m => Functor (RefCreator m) where
     fmap f (RefCreator m) = RefCreator $ fmap f . m
 
 instance MonadFix m => MonadFix (RefCreator m) where
-    mfix f = RefCreator $ \r -> mfix $ \a -> unRegister (f a) r
+    mfix f = RefCreator $ \r -> mfix $ \a -> unRefCreator (f a) r
 
 instance Functor m => Functor (RefReader m) where
     fmap f (RefReaderTPure x) = RefReaderTPure $ f x
