@@ -60,7 +60,7 @@ newtype RefHandler m a = RefHandler
         :: forall f . Functor f
         => (a -> f (a -> m a)) -> m (f (Bool -> m ())) -- True: run the trigger initially also
     }
--- possible alternative: m (a, m a -> m ())
+-- possible alternative: m (a, Bool -> m a -> m ())
 
 -- | global variables
 data GlobalVars m = GlobalVars
@@ -216,17 +216,12 @@ newReference st a0 = do
                         TriggerState _ _ _ x _ <- readRef' ori
                         modRef' (_postpone st) $ modify (>> x)
 
-newtype AddF x f a = AddF (f (x, a))
-
-instance Functor f => Functor (AddF x f) where
-    fmap f (AddF y) = AddF $ y <&> \(x, a) -> (x, f a)
 
 joinRefHandler :: (NewRef m) => GlobalVars m -> RefReader m (RefHandler m a) -> RefHandler m a
 joinRefHandler _ (RefReaderTPure r) = r
 joinRefHandler st (RefReader m) = RefHandler $ \a -> do
     ref <- flip unRegister st m
-    AddF fm <- runRefHandler ref (\x -> AddF $ a x <&> \q -> (q, q))
-    return $ fm <&> \(this, _reg) init -> do
+    runRefHandler ref (Const . a) <&> \fm -> getConst fm <&> \reg init -> do
 
         -- TODO: don't do this on simple write
         r <- newReference st $ const $ pure ()
@@ -234,7 +229,7 @@ joinRefHandler st (RefReader m) = RefHandler $ \a -> do
         flip (registerTrigger r) True $ \kill -> flip unRegister st $ do
             runM kill Kill
             ref <- m
-            fmap fst $ getHandler $ RefCreator $ \_st -> registerTrigger ref this init
+            fmap fst $ getHandler $ RefCreator $ \_st -> registerTrigger ref reg init
 
         flip unRegister st $ tellHand $ \msg -> do
             h <- flip unRegister st $ runRefReaderT $ readRef_ r
@@ -454,7 +449,7 @@ instance NewRef m => MonadRefReader (RefCreator m) where
 instance NewRef m => MonadRefReader (RefReader m) where
     type BaseRef (RefReader m) = RefHandler m
     liftRefReader m = RefReader $ protect' $ runRefReaderT m
-        where
+      where
         protect' (RefCreator m)
             = RefCreator $ \st -> do
                 ih <- readRef' $ _dependencycoll st
