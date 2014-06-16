@@ -353,6 +353,39 @@ tests runRefCreator liftRefWriter' = do
         q ==> (True, Just 3)
         s ==> (True, 3)
 
+    runTestSimple "mapchain" $ do
+        r <- newRef 'x'
+        let q = iterate (lensMap id) r !! 10
+        q ==> 'x'
+        writeRef' q 'y'
+        q ==> 'y'
+
+    runTestSimple "joinchain" $ do
+        rb <- newRef True
+        r1 <- newRef 'x'
+        r2 <- newRef 'y'
+        let f (r1, r2) = (r1', r2') where
+                r1' = join $ readRef rb <&> \b -> if b then r1 else r2
+                r2' = join $ readRef rb <&> \b -> if b then r2 else r1
+            (r1', r2') = iterate f (r1, r2) !! 10
+        r1' ==> 'x'
+        r2' ==> 'y'
+        writeRef' r1' 'X'
+        r1' ==> 'X'
+        r2' ==> 'y'
+        writeRef' r2' 'Y'
+        r1' ==> 'X'
+        r2' ==> 'Y'
+        writeRef' rb False
+        r1' ==> 'X'
+        r2' ==> 'Y'
+        writeRef' r1' 'x'
+        r1' ==> 'x'
+        r2' ==> 'Y'
+        writeRef' r2' 'y'
+        r1' ==> 'x'
+        r2' ==> 'y'
+
     runTestSimple "undoTest" $ do
         r <- newRef (3 :: Int)
         q <- extRef r (lens head $ flip (:)) []
@@ -687,7 +720,30 @@ tests runRefCreator liftRefWriter' = do
         r ==> Just 3
         writeRef' q2 1
         r ==> Just 1
+{- not ready
+    runTestSimple "notebook" $ do 
+        buttons <- newRef ("",[])
+        let ctrl = lens fst (\(_,xs) x -> ("",x:xs)) `lensMap` buttons
 
+            h b = do
+                q <- extRef b listLens (False, ("", []))
+                onChangeMemo (fst <$> readRef q) $ \bb -> return $ case bb of
+                    False -> pure $ pure []
+                    _ -> do
+                        r <- h $ _2 . _2 `lensMap` q
+                        pure $ ((_2 . _1 `lensMap` q) :) <$> join r
+
+        r <- fmap join $ h $ _2 `lensMap` buttons
+
+        let act i f = do
+                xs <- readRef r
+                when (length xs <= i) $ fail' "nootebook error"
+                f $ xs !! i
+
+        writeRef' ctrl "a"
+        buttons ==> ("", ["a"])
+        act 0 $ \rr -> writeRef' ctrl "a"
+-}
 
 {- not valid
     runTest "listen-listen" (do
@@ -837,4 +893,10 @@ undoLens eq = lens get set where
     set (xs, _) x = (x : xs, [])
 
 
+listLens :: Lens' (Bool, (a, [a])) [a]
+listLens = lens get set where
+    get (False, _) = []
+    get (True, (l, r)) = l: r
+    set (_, x) [] = (False, x)
+    set _ (l: r) = (True, (l, r))
 
