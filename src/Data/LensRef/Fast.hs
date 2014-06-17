@@ -255,7 +255,7 @@ joinRefHandler st (RefReader (RefCreator m)) = RefHandler $ \a -> do
         r <- newReadReference st (const $ pure ()) $ \kill -> do
             kill Kill
             ref <- m st
-            fmap fst $ getHandler' st $ writeRef_ ref init reg
+            fmap fst $ getHandler st $ writeRef_ ref init reg
 
         tellHand st $ \msg -> r >>= ($ msg)
 
@@ -302,10 +302,10 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
 
     newRef a = RefCreator $ \st -> pure <$> newReference st a
 
-    extRef m k a0 = do
-        r <- RefCreator $ \st -> newReference st a0
-        -- TODO: remove dropHandler?
-        dropHandler $ RefCreator $ \st -> do
+    extRef m k a0 = RefCreator $ \st -> do
+        r <- newReference st a0
+        -- TODO: remove getHandler?
+        _ <- getHandler st $ do
             writeRef_ r True $ \a -> runRefReaderT' st $ readRefSimple m <&> \b -> set k b a
             writeRef_ (joinRefHandler st m) False $ \_ -> readRef__ r <&> (^. k)
         return $ pure r
@@ -314,7 +314,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
     onChange m f = RefCreator $ \st -> do
         r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> do
             h Kill
-            runRefReaderT' st m >>= getHandler' st . flip unRefCreator st . f
+            runRefReaderT' st m >>= getHandler st . flip unRefCreator st . f
         return $ fmap snd $ RefReader $ RefCreator $ \_ -> r
 
     onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
@@ -326,7 +326,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
               then return it
               else do
                 h' Kill
-                (h, b) <- getHandler' st $ flip unRefCreator st $ f a
+                (h, b) <- getHandler st $ flip unRefCreator st $ f a
                 return ((== a), (h, b))
 
         return $ fmap (snd . snd) $ RefReader $ RefCreator $ \_ -> r
@@ -339,7 +339,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
               then return it
               else do
                 h' Kill
-                (h, b) <- getHandler' st $ flip unRefCreator st $ f a
+                (h, b) <- getHandler st $ flip unRefCreator st $ f a
                 return ((== a), (h, b))
 
         return $ lensMap (_2 . _2) $ pure r
@@ -358,12 +358,12 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
                 case listToMaybe [ b | (p, b) <- memo, p a] of
                   Just (m',h1') -> do
                     h1' Unblock
-                    (h2, b') <- getHandler' st m'
+                    (h2, b') <- getHandler st m'
                     return (((== a), ((m',h1',h2), b')), it: filter (not . ($ a) . fst) memo)
                   Nothing -> do
-                    (h1, m_) <- getHandler' st $ flip unRefCreator st $ f a
+                    (h1, m_) <- getHandler st $ flip unRefCreator st $ f a
                     let m' = flip unRefCreator st m_
-                    (h2, b') <- getHandler' st m'
+                    (h2, b') <- getHandler st m'
                     return (((== a), ((m',h1,h2), b')), it: memo)
         return $ readRef_ r <&> snd . snd . fst
 
@@ -402,15 +402,8 @@ liftRefWriter' = runRefWriterT
 --tellHand :: (NewRef m) => Handler m -> m ()
 tellHand st h = modRef' (_handlercollection st) $ modify $ \f msg -> f msg >> h msg
 
-dropHandler :: NewRef m => RefCreator m a -> RefCreator m a
-dropHandler m = RefCreator $ \st -> do
-    x <- readRef' $ _handlercollection st
-    a <- unRefCreator m st
-    writeRef' (_handlercollection st) x
-    return a
-
 --getHandler :: NewRef m => RefCreator m a -> RefCreator m (Handler m, a)
-getHandler' st m = do
+getHandler st m = do
     let r = _handlercollection st
     h' <- readRef' r
     writeRef' r $ const $ pure ()
