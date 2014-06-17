@@ -271,15 +271,15 @@ instance (NewRef m) => MonadRefCreator (RefCreator m) where
             a <- liftRefReader' mr
             if p a
               then return st
-              else case listToMaybe [ b | (p, b) <- memo, p a] of
-                Just (m',h1') -> do
-                    runHandler $ h2'' Kill
-                    runHandler $ h1'' Block
+              else do
+                runHandler $ h2'' Kill
+                runHandler $ h1'' Block
+                case listToMaybe [ b | (p, b) <- memo, p a] of
+                  Just (m',h1') -> do
                     runHandler $ h1' Unblock
                     (h2, b') <- getHandler m'
                     return (((== a), ((m',h1',h2), b')), it: filter (not . ($ a) . fst) memo)
-                Nothing -> do
-                    runHandler $ h2'' Kill
+                  Nothing -> do
                     (h1, m') <- getHandler $ f a
                     (h2, b') <- getHandler m'
                     return (((== a), ((m',h1,h2), b')), it: memo)
