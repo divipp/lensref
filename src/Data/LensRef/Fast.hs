@@ -221,34 +221,31 @@ joinRefHandler :: (NewRef m) => GlobalVars m -> RefReader m (RefHandler m a) -> 
 joinRefHandler _ (RefReaderTPure r) = r
 joinRefHandler st (RefReader m) = RefHandler $ \a -> do
     ref <- flip unRefCreator st m
-    runRefHandler ref (Const . a) <&> \fm -> getConst fm <&> \reg init -> do
+    readRef__ ref <&> \v -> a v <&> \reg init -> do
 
         -- TODO: don't do this on simple write
         r <- newReference st $ const $ pure ()
 
-        registerTrigger r True $ \kill -> flip unRefCreator st $ do
+        writeRef_ r True $ \kill -> flip unRefCreator st $ do
             runM kill Kill
             ref <- m
-            fmap fst $ getHandler $ RefCreator $ \_st -> registerTrigger ref init reg
+            fmap fst $ getHandler $ RefCreator $ \_st -> writeRef_ ref init reg
 
         flip unRefCreator st $ tellHand $ \msg -> do
-            h <- flip unRefCreator st $ runRefReaderT $ readRef_ r
+            h <- readRef__ r
             flip unRefCreator st $ runM h msg
 
-
-registerTrigger :: NewRef m => RefHandler m a -> Bool -> (a -> m a) -> m ()
-registerTrigger r init k = runRefHandler r (\_ -> Identity k) >>= ($ init) . runIdentity
 
 instance NewRef m => RefClass (RefHandler m) where
     type RefReaderSimple (RefHandler m) = RefReader m
 
     unitRef = pure $ RefHandler $ \x -> pure $ x () <&> \_ _ -> pure ()
 
-    {-# INLINE readRefSimple #-}
-    readRefSimple x = x >>= \r -> RefReader $ RefCreator $ \_st -> runRefHandler r Const <&> getConst
+--    {-# INLINE readRefSimple #-}
+    readRefSimple = (>>= readRef_)
 
     writeRefSimple x a = RefWriter $ runRefReaderT x >>= \r -> RefCreator $ \_st ->
-        registerTrigger r True $ \_ -> pure a
+        writeRef_ r True $ \_ -> pure a
 
     lensMap k (RefReaderTPure r) = pure $ lensMap_ r k
     lensMap k x = RefReader $ RefCreator $ \st -> pure $ joinRefHandler st $ x <&> \r -> lensMap_ r k
@@ -286,14 +283,14 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
         r <- RefCreator $ \st -> newReference st a0
         -- TODO: remove dropHandler?
         dropHandler $ RefCreator $ \st -> do
-            registerTrigger r True $ \a -> flip unRefCreator st $ runRefReaderT $ readRefSimple m <&> \b -> set k b a
-            registerTrigger (joinRefHandler st m) False $ \_ -> flip unRefCreator st $ runRefReaderT $ readRef_ r <&> (^. k)
+            writeRef_ r True $ \a -> flip unRefCreator st $ runRefReaderT $ readRefSimple m <&> \b -> set k b a
+            writeRef_ (joinRefHandler st m) False $ \_ -> readRef__ r <&> (^. k)
         return $ pure r
 
     onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
     onChange m f = RefCreator $ \st -> do
         r <- newReference st (const $ pure (), error "impossible #4")
-        registerTrigger r True $ \(h, _) -> flip unRefCreator st $ do
+        writeRef_ r True $ \(h, _) -> flip unRefCreator st $ do
             runM h Kill
             runRefReaderT m >>= getHandler . f
         return $ fmap snd $ readRef $ pure r
@@ -303,7 +300,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
 
     onChangeEq_ m f = RefCreator $ \st -> do
         r <- newReference st (const False, (const $ pure (), error "impossible #3"))
-        registerTrigger r True $ \it@(p, (h', _)) -> flip unRefCreator st $ do
+        writeRef_ r True $ \it@(p, (h', _)) -> flip unRefCreator st $ do
             a <- runRefReaderT m
             if p a
               then return it
@@ -317,7 +314,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
     onChangeMemo (RefReaderTPure a) f = fmap RefReaderTPure $ join $ f a
     onChangeMemo (RefReader mr) f = RefCreator $ \st -> do
         r <- newReference st ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
-        registerTrigger r True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> flip unRefCreator st $ do
+        writeRef_ r True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> flip unRefCreator st $ do
             let it = (p, (m'', h1''))
             a <- mr
             if p a
@@ -350,8 +347,14 @@ runRefCreator f = do
 
 -------------------- aux
 
+writeRef_ :: NewRef m => RefHandler m a -> Bool -> (a -> m a) -> m ()
+writeRef_ r init k = runRefHandler r (\_ -> Identity k) >>= ($ init) . runIdentity
+
+readRef__ :: NewRef m => RefHandler m a -> m a
+readRef__ r = runRefHandler r Const <&> getConst
+
 readRef_ :: NewRef m => RefHandler m a -> RefReader m a
-readRef_ r = RefReader $ RefCreator $ \_st -> runRefHandler r Const <&> getConst
+readRef_ = RefReader . RefCreator . const . readRef__
 
 runRefReaderT :: Monad m => RefReader m a -> RefCreator m a
 runRefReaderT (RefReaderTPure a) = return a
