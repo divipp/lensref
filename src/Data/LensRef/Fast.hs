@@ -372,7 +372,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
     onRegionStatusChange h
         = RefCreator $ \st -> tellHand st h
 
-runRefCreator :: NewRef m => ((RefWriter m () -> m ()) -> RefCreator m a) -> m a
+runRefCreator :: NewRef m => ((forall b . RefWriter m b -> m b) -> RefCreator m a) -> m a
 runRefCreator f = do
     s <- GlobalVars
             <$> newRef' (const $ pure ())

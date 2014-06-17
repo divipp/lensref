@@ -287,12 +287,12 @@ instance (NewRef m) => MonadRefCreator (RefCreator m) where
     onRegionStatusChange h
         = RefCreator $ tell $ MonadMonoid . runRefWriterT . liftEffectM . h
 
-runRefCreator :: (m ~ RefCreator n, NewRef n) => ((RefWriterOf m () -> EffectM m ()) -> m a) -> EffectM m a
+runRefCreator :: forall m a . NewRef m => ((forall b . RefWriter m b -> m b) -> RefCreator m a) -> m a
 runRefCreator f = do
     r <- newRef' mempty
-    let run = modRef' r
-    let run' = modRef' r
-    run' . fmap fst . runWriterT . unRefCreator $ f $ run . runRefWriterT
+    let run :: StateT (St m) m b -> m b
+        run = modRef' r
+    run . fmap fst . runWriterT . unRefCreator $ f $ run . runRefWriterT
 
 
 ----------------------------------- aux

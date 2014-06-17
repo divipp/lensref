@@ -53,9 +53,6 @@ type Prog = ProgramT (Inst) (State (Int, Seq.Seq Any))
 --sRefProg :: (forall x . StateT a (Prog) x -> Prog x) -> SRef Prog a
 sRefProg = SRefProg
 
---runSRefProg :: SRef Prog a -> StateT a (Prog) x -> Prog x
---runSRefProg = undefined
-
 newtype SRefProg a = SRefProg { runSRefProg :: forall x . StateT a (Prog) x -> Prog x }
 
 instance NewRef (Prog) where
@@ -353,13 +350,13 @@ eval__  op = do
 type Post m = ReaderT (RefWriterOf m () -> EffectM m ()) m
 
 runTest :: (Eq a, Show a, MonadRefCreator m, EffectM m ~ Prog)
-    => (((RefWriterOf m () -> EffectM m ()) -> m a) -> EffectM m a)
+    => (((forall b. RefWriterOf m b -> EffectM m b) -> m a) -> EffectM m a)
     -> String
     -> Post m a
     -> Prog' (a, Prog' ())
     -> IO ()
 runTest runRefCreator name r p0 = showError $ handEr name $ flip evalStateT (ST [] [] 0 (0, Seq.empty)) $ do
-    (Just a1, pe) <- coeval_ (runRefCreator $ runReaderT r) p0
+    (Just a1, pe) <- coeval_ (runRefCreator $ \rw -> runReaderT r rw) p0
     (a2,p) <- getProg' pe
     when (a1 /= a2) $ fail' $ "results differ: " ++ show a1 ++ " vs " ++ show a2
     (_, pr) <- coeval_ (forever $ join $ singleton ReadI) p

@@ -46,7 +46,7 @@ runTest__ = runTest
 -- | Look inside the sources for the tests.
 tests :: forall m
      . (MonadRefCreator m, EffectM m ~ Prog)
-    => (forall a . ((RefWriterOf m () -> EffectM m ()) -> m a) -> EffectM m a)
+    => (forall a . ((forall b . RefWriterOf m b -> EffectM m b) -> m a) -> EffectM m a)
     -> (forall b . RefWriterOf m b -> Post m b)
     -> IO ()
 
@@ -803,7 +803,7 @@ tests runRefCreator liftRefWriter' = do
 
 performanceTests :: forall m
      . (MonadRefCreator m)
-    => (forall a . ((RefWriterOf m () -> EffectM m ()) -> m a) -> EffectM m a)
+    => (forall a . ((forall b . RefWriterOf m b -> EffectM m b) -> m a) -> EffectM m a)
     -> (forall b . RefWriterOf m b -> m b)
     -> String
     -> Int
@@ -819,7 +819,7 @@ performanceTests runRefCreator liftRefWriter' name n = do
 
     let r ==> v = readRef r >>= (==? v)
 
-    runRefCreator $ const $ case name of
+    runRefCreator $ \_ -> case name of
         "create" -> do
             rs <- replicateM n $ newRef 'x'
             forM_ rs $ \r -> r ==> 'x'
