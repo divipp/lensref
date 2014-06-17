@@ -42,7 +42,7 @@ import Data.LensRef.Common
 data RefState m where
     RefState 
         :: a        -- reference value
-        -> TIds m   -- reverse dependency
+        -> TIds m   -- registered triggers (run them if the value changes)
         -> RefState m
 
 -- | trigger temporal state
@@ -116,8 +116,31 @@ conv r f = RefReader $ RefCreator $ \st ->
         fmap (fmap (RefWriter . RefCreator . const)) $ runRefHandler r (fmap (\g -> flip unRefCreator st . g) . f)
 -}
 
+newReadReference :: forall m a . NewRef m => GlobalVars m -> a -> (a -> m a) -> m (m a)
+newReadReference st a0 ma = do
+
+    writeRef' (_dependencycoll st) mempty
+    a1 <- ma a0
+    ih <- readRef' $ _dependencycoll st
+
+    if Map.null ih
+      then return $ pure a1
+      else do
+        i <- newId st
+        oir <- newRef' $ RefState a1 mempty
+
+        regTrigger st (i, oir) ih ma
+
+        return $ do
+            RefState a' _ <- readRef' oir
+            dp <- readRef' (_dependencycoll st)
+            writeRef' (_dependencycoll st) $ Map.insert i oir dp
+            return $ unsafeCoerce a'
+
+
 newReference :: forall m a . NewRef m => GlobalVars m -> a -> m (RefHandler m a)
 newReference st a0 = do
+
     i <- newId st
     oir <- newRef' $ RefState a0 mempty
 
@@ -136,7 +159,7 @@ newReference st a0 = do
 
             when init $ do
 
-                modRef' oir $ modify $ \(RefState _ s) -> RefState a s
+                writeRef' oir $ RefState a nas
 
                 when (not $ Map.null nas) $ do
 
@@ -151,21 +174,22 @@ newReference st a0 = do
                         collects p = mapM_ (collect p) =<< ch p
 
                         collect (i, op) v@(_, ov) = do
-                            notvisited <- modRef' ov $ do
-                                reverseDeps %= Map.insert i op
-                                use $ reverseDeps . to Map.null
-                            when notvisited $ collects v
+                            ts <- readRef' ov
+                            writeRef' ov $ ts { _reverseDeps = Map.insert i op $ _reverseDeps ts }
+                            when (Map.null $ _reverseDeps ts) $ collects v
 
-                    as <- (`filterM` Map.toList nas) $ \(_, na) -> readRef' na <&> (^. alive)
+                    as <- (`filterM` Map.toList nas) $ \(_, na) -> readRef' na <&> _alive
                     mapM_ collects as
 
                     let topSort [] = pure ()
                         topSort (p@(i, op):ps) = do
                             readRef' op >>= _updateFun
 
-                            let del (_, n) = modRef' n $ do
-                                    reverseDeps %= Map.delete i
-                                    use $ reverseDeps . to Map.null
+                            let del (_, n) = do
+                                    ts <- readRef' n
+                                    let rd = Map.delete i $ _reverseDeps ts
+                                    writeRef' n $ ts { _reverseDeps = rd }
+                                    return $ Map.null rd
                             ys <- filterM del =<< ch p
                             topSort $ mergeBy (\(i, _) (j, _) -> compare i j) ps ys
 
@@ -175,65 +199,65 @@ newReference st a0 = do
                     writeRef' (_postpone st) $ return ()
                     p
 
-            when (not $ Map.null ih) $ do
+            when (not $ Map.null ih) $ regTrigger st (i, oir) ih ma
 
-                j <- newId st
-                ori <- newRef' $ error "impossible"
 
-                let addRev, delRev :: SRef m (RefState m) -> m ()
-                    addRev x = modRef' x $ revDep %= Map.insert j ori
-                    delRev x = modRef' x $ revDep %= Map.delete j
+regTrigger :: forall m a . NewRef m => GlobalVars m -> Id m -> Ids m -> (a -> m a) -> m ()
+regTrigger st (i, oir) ih ma = do
 
-                    modReg = do
+    j <- newId st
+    ori <- newRef' $ error "impossible"
 
-                        aold <- readRef' oir <&> unsafeGet
+    let addRev, delRev :: SRef m (RefState m) -> m ()
+        addRev x = modRef' x $ revDep %= Map.insert j ori
+        delRev x = modRef' x $ revDep %= Map.delete j
 
-                        writeRef' (_dependencycoll st) mempty
-                        a <- ma aold
-                        ih <- readRef' $ _dependencycoll st
+        modReg = do
 
-                        ih' <- readRef' ori <&> (^. dependencies)
-                        mapM_ delRev $ Map.elems $ ih' `Map.difference` ih
-                        mapM_ addRev $ Map.elems $ ih `Map.difference` ih'
+            RefState aold nas <- readRef' oir
 
-                        modRef' oir $ modify $ \(RefState _ s) -> RefState a s
-                        modRef' ori $ dependencies .= ih
+            writeRef' (_dependencycoll st) mempty
+            a <- ma $ unsafeCoerce aold
+            ih <- readRef' $ _dependencycoll st
 
-                writeRef' ori $ TriggerState True (i, oir) ih modReg mempty
+            writeRef' oir $ RefState a nas
 
-                mapM_ addRev $ Map.elems ih
+            ts <- readRef' ori
+            writeRef' ori $ ts { _dependencies = ih }
+            let ih' = _dependencies ts
 
-                flip unRefCreator st $ tellHand $ \msg -> do
+            mapM_ delRev $ Map.elems $ ih' `Map.difference` ih
+            mapM_ addRev $ Map.elems $ ih `Map.difference` ih'
 
-                    modRef' ori $ alive .= (msg == Unblock)
+    writeRef' ori $ TriggerState True (i, oir) ih modReg mempty
 
-                    when (msg == Kill) $ do
-                        ih' <- readRef' ori
-                        mapM_ delRev $ Map.elems $ ih' ^. dependencies
+    mapM_ addRev $ Map.elems ih
 
-                    -- TODO
-                    when (msg == Unblock) $ do
-                        TriggerState _ _ _ x _ <- readRef' ori
-                        modRef' (_postpone st) $ modify (>> x)
+    tellHand st $ \msg -> do
+
+        ts <- readRef' ori
+        writeRef' ori $ ts { _alive = msg == Unblock }
+
+        when (msg == Kill) $
+            mapM_ delRev $ Map.elems $ _dependencies ts
+
+        -- TODO
+        when (msg == Unblock) $
+            modRef' (_postpone st) $ modify (>> _updateFun ts)
 
 
 joinRefHandler :: (NewRef m) => GlobalVars m -> RefReader m (RefHandler m a) -> RefHandler m a
 joinRefHandler _ (RefReaderTPure r) = r
-joinRefHandler st (RefReader m) = RefHandler $ \a -> do
-    ref <- flip unRefCreator st m
+joinRefHandler st (RefReader (RefCreator m)) = RefHandler $ \a -> do
+    ref <- m st
     readRef__ ref <&> \v -> a v <&> \reg init -> do
 
-        -- TODO: don't do this on simple write
-        r <- newReference st $ const $ pure ()
+        r <- newReadReference st (const $ pure ()) $ \kill -> do
+            kill Kill
+            ref <- m st
+            fmap fst $ getHandler' st $ writeRef_ ref init reg
 
-        writeRef_ r True $ \kill -> flip unRefCreator st $ do
-            runM kill Kill
-            ref <- m
-            fmap fst $ getHandler $ RefCreator $ \_st -> writeRef_ ref init reg
-
-        flip unRefCreator st $ tellHand $ \msg -> do
-            h <- readRef__ r
-            flip unRefCreator st $ runM h msg
+        tellHand st $ \msg -> r >>= ($ msg)
 
 
 instance NewRef m => RefClass (RefHandler m) where
@@ -289,14 +313,24 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
 
     onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
     onChange m f = RefCreator $ \st -> do
-        r <- newReference st (const $ pure (), error "impossible #4")
-        writeRef_ r True $ \(h, _) -> flip unRefCreator st $ do
+        r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> flip unRefCreator st $ do
             runM h Kill
             runRefReaderT m >>= getHandler . f
-        return $ fmap snd $ readRef $ pure r
+        return $ fmap snd $ RefReader $ RefCreator $ \_ -> r
 
     onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
-    onChangeEq r f = fmap readRef $ onChangeEq_ r f
+    onChangeEq m f = RefCreator $ \st -> do
+        r <- newReadReference st (const False, (const $ pure (), error "impossible #3"))
+          $ \it@(p, (h', _)) -> flip unRefCreator st $ do
+            a <- runRefReaderT m
+            if p a
+              then return it
+              else do
+                runM h' Kill
+                (h, b) <- getHandler $ f a
+                return ((== a), (h, b))
+
+        return $ fmap (snd . snd) $ RefReader $ RefCreator $ \_ -> r
 
     onChangeEq_ m f = RefCreator $ \st -> do
         r <- newReference st (const False, (const $ pure (), error "impossible #3"))
@@ -334,7 +368,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
         return $ readRef_ r <&> snd . snd . fst
 
     onRegionStatusChange h
-        = tellHand h
+        = RefCreator $ \st -> tellHand st h
 
 runRefCreator :: NewRef m => ((RefWriter m () -> m ()) -> RefCreator m a) -> m a
 runRefCreator f = do
@@ -365,8 +399,8 @@ runM m k = RefCreator . const $ m k
 liftRefWriter' :: RefWriterOf_ (RefReader m) a -> RefCreator m a
 liftRefWriter' = runRefWriterT
 
-tellHand :: (NewRef m) => Handler m -> RefCreator m ()
-tellHand h = RefCreator $ \st -> modRef' (_handlercollection st) $ modify $ \f msg -> f msg >> h msg
+--tellHand :: (NewRef m) => Handler m -> m ()
+tellHand st h = modRef' (_handlercollection st) $ modify $ \f msg -> f msg >> h msg
 
 dropHandler :: NewRef m => RefCreator m a -> RefCreator m a
 dropHandler m = RefCreator $ \st -> do
@@ -376,17 +410,16 @@ dropHandler m = RefCreator $ \st -> do
     return a
 
 getHandler :: NewRef m => RefCreator m a -> RefCreator m (Handler m, a)
-getHandler m = RefCreator $ \st -> do
+getHandler m = RefCreator $ \st -> getHandler' st $ unRefCreator m st
+
+getHandler' st m = do
     let r = _handlercollection st
     h' <- readRef' r
     writeRef' r $ const $ pure ()
-    a <- unRefCreator m st
+    a <- m
     h <- readRef' r
     writeRef' r h'
     return (h, a)
-
-unsafeGet :: RefState m -> a
-unsafeGet (RefState a _) = unsafeCoerce a
 
 newId :: NewRef m => GlobalVars m -> m Int
 newId (GlobalVars _ _ _ st) = do
@@ -395,15 +428,6 @@ newId (GlobalVars _ _ _ st) = do
     return c
 
 -------------- lenses
-
-dependencies :: Lens' (TriggerState m) (Ids m)
-dependencies k (TriggerState a b c d e) = k c <&> \c' -> TriggerState a b c' d e
-
-alive :: Lens' (TriggerState m) Bool
-alive k (TriggerState a b c d e) = k a <&> \a' -> TriggerState a' b c d e
-
-reverseDeps :: Lens' (TriggerState m) (TIds m)
-reverseDeps k (TriggerState a b c d e) = k e <&> \e' -> TriggerState a b c d e'
 
 revDep :: Lens' (RefState m) (TIds m)
 revDep k (RefState a b) = k b <&> \b' -> RefState a b'
