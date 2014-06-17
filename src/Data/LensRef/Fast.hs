@@ -464,9 +464,9 @@ instance NewRef m => MonadRefReader (RefCreator m) where
 
 instance NewRef m => MonadRefReader (RefReader m) where
     type BaseRef (RefReader m) = RefHandler m
-    liftRefReader m = RefReader $ protect' $ runRefReaderT m
+    liftRefReader m = RefReader $ protect $ runRefReaderT m
       where
-        protect' (RefCreator m)
+        protect (RefCreator m)
             = RefCreator $ \st -> do
                 ih <- readRef' $ _dependencycoll st
                 a <- m st
