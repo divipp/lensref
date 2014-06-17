@@ -297,7 +297,6 @@ tr :: Lens s t a b -> MLens s t a b
 tr l f = P $ \a -> l <$> unP f (getConst $ l Const a)
 -}
 
-
 instance NewRef m => MonadRefCreator (RefCreator m) where
     {-# SPECIALIZE instance MonadRefCreator (RefCreator IO) #-}
 
@@ -307,40 +306,40 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
         r <- RefCreator $ \st -> newReference st a0
         -- TODO: remove dropHandler?
         dropHandler $ RefCreator $ \st -> do
-            writeRef_ r True $ \a -> flip unRefCreator st $ runRefReaderT $ readRefSimple m <&> \b -> set k b a
+            writeRef_ r True $ \a -> runRefReaderT' st $ readRefSimple m <&> \b -> set k b a
             writeRef_ (joinRefHandler st m) False $ \_ -> readRef__ r <&> (^. k)
         return $ pure r
 
     onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
     onChange m f = RefCreator $ \st -> do
-        r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> flip unRefCreator st $ do
-            runM h Kill
-            runRefReaderT m >>= getHandler . f
+        r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> do
+            h Kill
+            runRefReaderT' st m >>= getHandler' st . flip unRefCreator st . f
         return $ fmap snd $ RefReader $ RefCreator $ \_ -> r
 
     onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
     onChangeEq m f = RefCreator $ \st -> do
         r <- newReadReference st (const False, (const $ pure (), error "impossible #3"))
-          $ \it@(p, (h', _)) -> flip unRefCreator st $ do
-            a <- runRefReaderT m
+          $ \it@(p, (h', _)) -> do
+            a <- runRefReaderT' st m
             if p a
               then return it
               else do
-                runM h' Kill
-                (h, b) <- getHandler $ f a
+                h' Kill
+                (h, b) <- getHandler' st $ flip unRefCreator st $ f a
                 return ((== a), (h, b))
 
         return $ fmap (snd . snd) $ RefReader $ RefCreator $ \_ -> r
 
     onChangeEq_ m f = RefCreator $ \st -> do
         r <- newReference st (const False, (const $ pure (), error "impossible #3"))
-        writeRef_ r True $ \it@(p, (h', _)) -> flip unRefCreator st $ do
-            a <- runRefReaderT m
+        writeRef_ r True $ \it@(p, (h', _)) -> do
+            a <- runRefReaderT' st m
             if p a
               then return it
               else do
-                runM h' Kill
-                (h, b) <- getHandler $ f a
+                h' Kill
+                (h, b) <- getHandler' st $ flip unRefCreator st $ f a
                 return ((== a), (h, b))
 
         return $ lensMap (_2 . _2) $ pure r
@@ -348,22 +347,23 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
     onChangeMemo (RefReaderTPure a) f = fmap RefReaderTPure $ join $ f a
     onChangeMemo (RefReader mr) f = RefCreator $ \st -> do
         r <- newReference st ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
-        writeRef_ r True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> flip unRefCreator st $ do
+        writeRef_ r True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> do
             let it = (p, (m'', h1''))
-            a <- mr
+            a <- flip unRefCreator st mr
             if p a
               then return st'
               else do
-                runM h2'' Kill
-                runM h1'' Block
+                h2'' Kill
+                h1'' Block
                 case listToMaybe [ b | (p, b) <- memo, p a] of
                   Just (m',h1') -> do
-                    runM h1' Unblock
-                    (h2, b') <- getHandler m'
+                    h1' Unblock
+                    (h2, b') <- getHandler' st m'
                     return (((== a), ((m',h1',h2), b')), it: filter (not . ($ a) . fst) memo)
                   Nothing -> do
-                    (h1, m') <- getHandler $ f a
-                    (h2, b') <- getHandler m'
+                    (h1, m_) <- getHandler' st $ flip unRefCreator st $ f a
+                    let m' = flip unRefCreator st m_
+                    (h2, b') <- getHandler' st m'
                     return (((== a), ((m',h1,h2), b')), it: memo)
         return $ readRef_ r <&> snd . snd . fst
 
@@ -394,7 +394,7 @@ runRefReaderT :: Monad m => RefReader m a -> RefCreator m a
 runRefReaderT (RefReaderTPure a) = return a
 runRefReaderT (RefReader x) = x
 
-runM m k = RefCreator . const $ m k
+runRefReaderT' st = flip unRefCreator st . runRefReaderT
 
 liftRefWriter' :: RefWriterOf_ (RefReader m) a -> RefCreator m a
 liftRefWriter' = runRefWriterT
@@ -409,9 +409,7 @@ dropHandler m = RefCreator $ \st -> do
     writeRef' (_handlercollection st) x
     return a
 
-getHandler :: NewRef m => RefCreator m a -> RefCreator m (Handler m, a)
-getHandler m = RefCreator $ \st -> getHandler' st $ unRefCreator m st
-
+--getHandler :: NewRef m => RefCreator m a -> RefCreator m (Handler m, a)
 getHandler' st m = do
     let r = _handlercollection st
     h' <- readRef' r
@@ -426,8 +424,6 @@ newId (GlobalVars _ _ _ st) = do
     c <- readRef' st
     writeRef' st $ succ c
     return c
-
--------------- lenses
 
 revDep :: Lens' (RefState m) (TIds m)
 revDep k (RefState a b) = k b <&> \b' -> RefState a b'
