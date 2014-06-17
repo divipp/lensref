@@ -280,7 +280,9 @@ lensMap_ r k = lensMap__ r $ tr' k
 lensMap__ :: NewRef m => RefHandler m a -> MLens' a b -> RefHandler m b
 lensMap__ (RefHandler r) k = RefHandler $ r . k
 
-type MLens s t a b = forall k . Functor k => Lens s (s -> k t) a (a -> k b)
+--type MLens s t a b = forall k . Functor k => Lens s (s -> k t) a (a -> k b)
+type MLens s t a b = forall f k . (Functor f, Functor k) => (a -> f (a -> k b)) -> s -> f (s -> k t)
+
 type MLens' s a = MLens s s a a
 
 tr' :: Lens s t a b -> MLens s t a b
@@ -464,7 +466,7 @@ instance NewRef m => MonadRefReader (RefCreator m) where
 
 instance NewRef m => MonadRefReader (RefReader m) where
     type BaseRef (RefReader m) = RefHandler m
-    liftRefReader m = RefReader $ protect $ runRefReaderT m
+    liftRefReader = RefReader . protect . runRefReaderT
       where
         protect (RefCreator m)
             = RefCreator $ \st -> do
