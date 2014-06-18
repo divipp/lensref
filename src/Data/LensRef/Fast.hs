@@ -18,7 +18,6 @@ module Data.LensRef.Fast
     , RefCreator
     , RefWriter
     , runRefCreator
-    , liftRefWriter'
     ) where
 
 --import Debug.Trace
@@ -397,9 +396,6 @@ runRefReaderT (RefReaderTPure a) = return a
 runRefReaderT (RefReader x) = x
 
 runRefReaderT' st = flip unRefCreator st . runRefReaderT
-
-liftRefWriter' :: RefWriterOf_ (RefReader m) a -> RefCreator m a
-liftRefWriter' = runRefWriterT
 
 --tellHand :: (NewRef m) => Handler m -> m ()
 tellHand st h = modRef' (_handlercollection st) $ modify $ \f msg -> f msg >> h msg

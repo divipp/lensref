@@ -18,7 +18,6 @@ module Data.LensRef.Pure
     , RefCreator
     , RefWriter
     , runRefCreator
-    , liftRefWriter'
     ) where
 
 -- import Data.Monoid
@@ -313,9 +312,6 @@ unsafeGet (Dyn a) = unsafeCoerce a
 
 runHandler :: (Monad m, Applicative m) => MonadMonoid (StateT (St m) m) () -> HandT m ()
 runHandler = mapStateT lift . runMonadMonoid
-
-liftRefWriter' :: (Monad m, Applicative m) => RefWriterOf (RefCreator m) a -> RefCreator m a
-liftRefWriter' = RefCreator . lift . runRefWriterT
 
 ----------------------------------------- lenses
 
