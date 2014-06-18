@@ -3,27 +3,7 @@ version:            0.3
 category:           Control, Data
 synopsis:           References which can be joined and on which lenses can be applied
 description:
-    The lensref package provides and interface an two implementation
-    for references which can be joined and on which lenses can be applied.
-    .
-    -The pure implementation is slow and has memory leaks but probably easier to follow.
-    This is the reference implementation, so if the the other implementation
-    differs this has the right behaviour.
-    .
-    -The fast implementation is intended for real usage.
-    .
-    Status:
-    .
-    -The interface is getting stable. You can expect more functionality and minor changes on current functionality.
-    .
-    -There are test cases for the first half of the interface.
-    Both implementations fulfil the test cases.
-    .
-    -The pure implementation is ready.
-    .
-    -The fast implementation is much faster than the pure implementation,
-    but it is far from being as fast as possible.
-    Probably it also leaks memory.
+    The lensref package provides references which can be joined and on which lenses can be applied.
     .
     To see what is possible to do with lens references, look at the test cases in "Data.LensRef.Test"
     .
