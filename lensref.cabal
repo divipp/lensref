@@ -78,11 +78,10 @@ library
                     Control.Lens.Simple
   if flag(tests)
     build-depends:
-                    operational < 0.3
-                  , QuickCheck >= 2 && < 2.8
+--                    operational < 0.3
+--                  , QuickCheck >= 2 && < 2.8
     exposed-modules:
 --                    Data.LensRef.Arbitrary
-                    Data.LensRef.TestEnv
                     Data.LensRef.Test
 
   ghc-options: 

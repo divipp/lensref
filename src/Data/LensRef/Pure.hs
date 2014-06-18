@@ -389,6 +389,4 @@ allUnique = and . flip evalState mempty . mapM f where
 readerToState :: (Monad m, Applicative m) => (s -> r) -> ReaderT r m a -> StateT s m a
 readerToState g (ReaderT f) = StateT $ \s -> fmap (flip (,) s) $ f $ g s
 
-nextKey :: Map.IntMap a -> Int
-nextKey = maybe 0 ((+1) . fst . fst) . Map.maxViewWithKey
 

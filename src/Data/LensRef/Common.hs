@@ -4,12 +4,16 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE GADTs #-}
 module Data.LensRef.Common where
 
-import Data.Monoid
+import Data.Monoid hiding (Any)
 import Data.IORef
+import qualified Data.IntMap as Map
 import Control.Applicative
 import Control.Monad.State
+
+import Unsafe.Coerce
 
 import Data.LensRef.Class
 
@@ -79,7 +83,34 @@ instance NewRef IO where
 --    {-# INLINE writeRef' #-}
     writeRef' r a = writeIORef r a
 
+-------------------
 
+type NewRefT = StateT (Map.IntMap Any)
+
+nextKey :: Map.IntMap a -> Int
+nextKey = maybe 0 ((+1) . fst . fst) . Map.maxViewWithKey
+
+data Any where Any :: a -> Any
+
+newtype SRefProg a = SRefProg Int
+
+instance (Monad m, Functor m) => NewRef (StateT (Map.IntMap Any) m) where
+    type SRef (StateT (Map.IntMap Any) m) = SRefProg 
+    newRef' a = do
+        i <- gets nextKey
+        let r = SRefProg i
+        writeRef' r a
+        return r
+
+    readRef' (SRefProg i) = gets $ unsafeGetAny . (Map.! i)
+      where
+        unsafeGetAny :: Any -> a
+        unsafeGetAny (Any a) = unsafeCoerce a
+
+    writeRef' (SRefProg i) a = modify $ Map.insert i (Any a)
+
+runNewRefT :: Monad m => NewRefT m a -> m a
+runNewRefT = flip evalStateT mempty
 
 ---------------------------
 
