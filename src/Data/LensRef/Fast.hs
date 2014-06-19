@@ -90,7 +90,7 @@ type OrdRefSet m a = Map.IntMap (SRef m a)
 -- reference reader monad
 data RefReader m a
     = RefReader !(RefCreator m a)
-    | RefReaderTPure a
+    | RefReaderPure a
 
 -- reference creator monad
 newtype RefCreator m a
@@ -246,7 +246,7 @@ regTrigger st (i, oir) ih ma = do
 
 
 joinRefHandler :: (NewRef m) => GlobalVars m -> RefReader m (RefHandler m a) -> RefHandler m a
-joinRefHandler _ (RefReaderTPure r) = r
+joinRefHandler _ (RefReaderPure r) = r
 joinRefHandler st (RefReader (RefCreator m)) = RefHandler $ \a -> do
     ref <- m st
     readRef__ ref <&> \v -> a v <&> \reg init -> do
@@ -270,7 +270,7 @@ instance NewRef m => RefClass (RefHandler m) where
     writeRefSimple x a = RefWriter $ runRefReaderT x >>= \r -> RefCreator $ \_st ->
         writeRef_ r True $ \_ -> pure a
 
-    lensMap k (RefReaderTPure r) = pure $ lensMap_ r k
+    lensMap k (RefReaderPure r) = pure $ lensMap_ r k
     lensMap k x = RefReader $ RefCreator $ \st -> pure $ joinRefHandler st $ x <&> \r -> lensMap_ r k
 
 lensMap_ :: NewRef m => RefHandler m a -> Lens' a b -> RefHandler m b
@@ -311,19 +311,19 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
             writeRef_ (joinRefHandler st m) False $ \_ -> readRef__ r <&> (^. k)
         return $ pure r
 
-    onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
+    onChange (RefReaderPure a) f = RefReaderPure <$> f a
     onChange m f = RefCreator $ \st -> do
         r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> do
             h Kill
-            runRefReaderT' st m >>= getHandler st . flip unRefCreator st . f
+            runRefReaderT' st m >>= noDependency st . getHandler st . flip unRefCreator st . f
         return $ fmap snd $ RefReader $ RefCreator $ \_ -> r
 
-    onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
+    onChangeEq (RefReaderPure a) f = fmap RefReaderPure $ f a
     onChangeEq m f = RefCreator $ \st -> do
         r <- newReadReference st (const False, (const $ pure (), error "impossible #3"))
           $ \it@(p, (h', _)) -> do
             a <- runRefReaderT' st m
-            if p a
+            noDependency st $ if p a
               then return it
               else do
                 h' Kill
@@ -336,7 +336,7 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
         r <- newReference st (const False, (const $ pure (), error "impossible #3"))
         writeRef_ r True $ \it@(p, (h', _)) -> do
             a <- runRefReaderT' st m
-            if p a
+            noDependency st $ if p a
               then return it
               else do
                 h' Kill
@@ -345,13 +345,13 @@ instance NewRef m => MonadRefCreator (RefCreator m) where
 
         return $ lensMap (_2 . _2) $ pure r
 
-    onChangeMemo (RefReaderTPure a) f = fmap RefReaderTPure $ join $ f a
+    onChangeMemo (RefReaderPure a) f = fmap RefReaderPure $ join $ f a
     onChangeMemo (RefReader mr) f = RefCreator $ \st -> do
         r <- newReference st ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
         writeRef_ r True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> do
             let it = (p, (m'', h1''))
             a <- flip unRefCreator st mr
-            if p a
+            noDependency st $ if p a
               then return st'
               else do
                 h2'' Kill
@@ -392,7 +392,7 @@ readRef_ :: NewRef m => RefHandler m a -> RefReader m a
 readRef_ = RefReader . RefCreator . const . readRef__
 
 runRefReaderT :: Monad m => RefReader m a -> RefCreator m a
-runRefReaderT (RefReaderTPure a) = return a
+runRefReaderT (RefReaderPure a) = return a
 runRefReaderT (RefReader x) = x
 
 runRefReaderT' st = flip unRefCreator st . runRefReaderT
@@ -409,6 +409,13 @@ getHandler st m = do
     h <- readRef' r
     writeRef' r h'
     return (h, a)
+
+noDependency :: NewRef m => GlobalVars m -> m a -> m a
+noDependency st m = do
+    ih <- readRef' $ _dependencycoll st
+    a <- m
+    writeRef' (_dependencycoll st) ih
+    return a
 
 newId :: NewRef m => GlobalVars m -> m Int
 newId (GlobalVars _ _ _ st) = do
@@ -440,20 +447,20 @@ instance MonadFix m => MonadFix (RefCreator m) where
     mfix f = RefCreator $ \r -> mfix $ \a -> unRefCreator (f a) r
 
 instance Functor m => Functor (RefReader m) where
-    fmap f (RefReaderTPure x) = RefReaderTPure $ f x
+    fmap f (RefReaderPure x) = RefReaderPure $ f x
     fmap f (RefReader m) = RefReader $ fmap f m
 
 instance Applicative m => Applicative (RefReader m) where
-    pure = RefReaderTPure
-    RefReaderTPure f <*> RefReaderTPure a = RefReaderTPure $ f a
+    pure = RefReaderPure
+    RefReaderPure f <*> RefReaderPure a = RefReaderPure $ f a
     mf <*> ma = RefReader $ runRefReaderT mf <*> runRefReaderT ma
       where
-        runRefReaderT (RefReaderTPure a) = pure a
+        runRefReaderT (RefReaderPure a) = pure a
         runRefReaderT (RefReader x) = x
 
 instance Monad m => Monad (RefReader m) where
-    return = RefReaderTPure
-    RefReaderTPure r >>= f = f r
+    return = RefReaderPure
+    RefReaderPure r >>= f = f r
     RefReader mr >>= f = RefReader $ mr >>= runRefReaderT . f
 
 instance NewRef m => MonadRefReader (RefCreator m) where
@@ -462,14 +469,8 @@ instance NewRef m => MonadRefReader (RefCreator m) where
 
 instance NewRef m => MonadRefReader (RefReader m) where
     type BaseRef (RefReader m) = RefHandler m
-    liftRefReader = RefReader . protect . runRefReaderT
-      where
-        protect (RefCreator m)
-            = RefCreator $ \st -> do
-                ih <- readRef' $ _dependencycoll st
-                a <- m st
-                writeRef' (_dependencycoll st) ih
-                return a
+    liftRefReader (RefReaderPure a) = RefReaderPure a
+    liftRefReader (RefReader (RefCreator m)) = RefReader $ RefCreator $ \st -> noDependency st $ m st
     readRef = readRefSimple
 
 instance NewRef m => MonadRefReader (RefWriterOf_ (RefReader m)) where
