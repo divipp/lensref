@@ -254,7 +254,7 @@ joinRefHandler st (RefReader (RefCreator m)) = RefHandler $ \a -> do
         r <- newReadReference st (const $ pure ()) $ \kill -> do
             kill Kill
             ref <- m st
-            fmap fst $ getHandler st $ writeRef_ ref init reg
+            noDependency st $ fmap fst $ getHandler st $ writeRef_ ref init reg
 
         tellHand st $ \msg -> r >>= ($ msg)
 
