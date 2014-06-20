@@ -12,6 +12,7 @@ import Data.IORef
 import qualified Data.IntMap as Map
 import Control.Applicative
 import Control.Monad.State
+import Control.Monad.Reader
 
 import Unsafe.Coerce
 
@@ -73,6 +74,8 @@ class (Monad m, Applicative m) => NewRef m where
     writeRef' :: SRef m a -> a -> m ()
     writeRef' r a = modRef' r $ put a
 
+-------------------
+
 instance NewRef IO where
     type SRef IO = IORef
 
@@ -82,6 +85,14 @@ instance NewRef IO where
     readRef' r = readIORef r
 --    {-# INLINE writeRef' #-}
     writeRef' r a = writeIORef r a
+
+-------------------
+
+instance NewRef m => NewRef (ReaderT r m) where
+    type SRef (ReaderT r m) = SRef m
+    newRef' = lift . newRef'
+    readRef' = lift . readRef'
+    writeRef' r = lift . writeRef' r
 
 -------------------
 
