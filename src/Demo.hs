@@ -10,7 +10,7 @@ import Data.LensRef.Fast
 main :: IO ()
 main = do
     exit <- newEmptyMVar
-    runRefCreator $ \unlift -> do
+    runRefCreatorT $ \unlift -> do
 
         a <- newRef False
         b <- newRef False

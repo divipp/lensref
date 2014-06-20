@@ -15,7 +15,7 @@ module Data.LensRef
             , RefSimple
     , MonadRefReader (..)
     , MonadRefWriter (..)
-    , Ref
+    , RefOf
     , RefReaderOf
     , RefWriterOf
 
@@ -28,7 +28,7 @@ module Data.LensRef
     , EqRefClass        --EqRefClass (..)
             , hasEffect
 --    , EqRefSimple
-    , EqRef
+    , EqRefOf
     , toEqRef
     , fromEqRef
     , newEqRef
@@ -81,7 +81,7 @@ As a reference, @(m :: EqRefSimple r a)@ behaves as
 type EqRefSimple r a = RefReaderSimple r (EqRefCore r a)
 
 -- | TODO
-type EqRef m a = EqRefSimple (BaseRef m) a
+type EqRefOf m a = EqRefSimple (BaseRef m) a
 
 {- | @EqRefSimple@ construction.
 -}
@@ -89,7 +89,7 @@ toEqRef :: (RefClass r, Eq a) => RefSimple r a -> EqRefSimple r a
 toEqRef r = EqRefCore <$> r <*> ((/=) <$> readRef r)
 
 -- | TODO
-newEqRef :: (MonadRefCreator m, Eq a) => a -> m (EqRef m a) 
+newEqRef :: (MonadRefCreator m, Eq a) => a -> m (EqRefOf m a) 
 newEqRef = fmap toEqRef . newRef
 
 {- | An @EqRefSimple@ is a normal reference if we forget about the equality.

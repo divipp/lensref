@@ -27,20 +27,20 @@ import Data.LensRef.Pure as Pure
 -----------------------------------------------------------------
 
 runTests :: IO ()
-runTests = tests Fast.runRefCreator
+runTests = tests Fast.runRefCreatorT
 
 runPerformanceTests :: String -> Int -> IO ()
-runPerformanceTests = performanceTests Fast.runRefCreator
+runPerformanceTests = performanceTests Fast.runRefCreatorT
 
 runTestsPure :: IO ()
-runTestsPure = tests Pure.runRefCreator
+runTestsPure = tests Pure.runRefCreatorT
 
 runPerformanceTestsPure :: String -> Int -> IO ()
-runPerformanceTestsPure = performanceTests Pure.runRefCreator
+runPerformanceTestsPure = performanceTests Pure.runRefCreatorT
 
 ------------------------------------
 
-type Prog = NewRefT (Writer [Maybe (Either String String)])
+type Prog = SimpleRefT (Writer [Maybe (Either String String)])
 
 message :: (MonadEffect m, EffectM m ~ Prog) => String -> m ()
 message = liftEffectM . message_
@@ -51,7 +51,7 @@ send x y = liftEffectM (tell [Nothing]) >> writeRef x y
 message' s = liftEffectM $ tell [Just $ Left $ "message: " ++ s]
 
 runProg :: String -> Prog () -> IO ()
-runProg name = showRes . f [] . snd . runWriter . runNewRefT
+runProg name = showRes . f [] . snd . runWriter . runSimpleRefT
   where
     showRes [] = return ()
     showRes xs = fail $ "\ntest " ++ name ++ " failed.\n" ++ unlines xs ++ "\n"
@@ -69,9 +69,9 @@ tests :: forall m
     => (forall a . ((forall b . RefWriterOf m b -> EffectM m b) -> m a) -> EffectM m a)
     -> IO ()
 
-tests runRefCreator = do
+tests runRefCreatorT = do
 
-    let runTest name t = runProg name $ join $ runRefCreator $ \runRefWriter -> do
+    let runTest name t = runProg name $ join $ runRefCreatorT $ \runRefWriter -> do
             fmap runRefWriter t
 
         a ==? b = when (a /= b) $ message $ show a ++ " /= " ++ show b
@@ -107,7 +107,7 @@ tests runRefCreator = do
 -}
     runTest "extRefTest" $ do
         r <- newRef $ Just (3 :: Int)
-        q <- extRef r maybeLens (False, 0)
+        q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
             q2 = _2 `lensMap` q
         return $ do
@@ -159,7 +159,7 @@ tests runRefCreator = do
         r1 <- newRef (Nothing :: Maybe Int)
         rr <- newRef r1
         let r = join $ readRef rr
-        q <- extRef r maybeLens (False, 0)
+        q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
             q2 = _2 `lensMap` q
         return $ do
@@ -194,7 +194,7 @@ tests runRefCreator = do
         r1 <- newRef Nothing
         rr <- newRef $ lensMap id r1
         let r = lensMap id $ join $ readRef $ lensMap id rr
-        q <- extRef r maybeLens (False, 0)
+        q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
             q2 = _2 `lensMap` q
         q ==> (False, 0)
@@ -224,7 +224,7 @@ tests runRefCreator = do
         let r = join $ do
                 b <- readRef rr
                 pure $ if b then r1 else r2
-        q <- extRef r maybeLens (False, 0)
+        q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
             q2 = _2 `lensMap` q
         return $ do
@@ -258,8 +258,8 @@ tests runRefCreator = do
 
     runTest "chainTest0" $ do
         r <- newRef (1 :: Int)
-        q <- extRef r id 0
-        s <- extRef q id 0
+        q <- extendRef r id 0
+        s <- extendRef q id 0
         return $ do
             r ==> 1
             q ==> 1
@@ -279,8 +279,8 @@ tests runRefCreator = do
 
     runTest "forkTest" $ do
         r <- newRef (1 :: Int)
-        q <- extRef r id 0
-        s <- extRef r id 0
+        q <- extendRef r id 0
+        s <- extendRef r id 0
         return $ do
             r ==> 1
             q ==> 1
@@ -300,8 +300,8 @@ tests runRefCreator = do
 
     runTest "forkTest2" $ do
         r <- newRef $ Just (1 :: Int)
-        q <- extRef r maybeLens (False, 0)
-        s <- extRef r maybeLens (False, 0)
+        q <- extendRef r maybeLens (False, 0)
+        s <- extendRef r maybeLens (False, 0)
         return $ do
             r ==> Just 1
             q ==> (True, 1)
@@ -345,8 +345,8 @@ tests runRefCreator = do
 
     runTest "chainTest" $ do
         r <- newRef $ Just Nothing
-        q <- extRef r maybeLens (False, Nothing)
-        s <- extRef (_2 `lensMap` q) maybeLens (False, 3 :: Int)
+        q <- extendRef r maybeLens (False, Nothing)
+        s <- extendRef (_2 `lensMap` q) maybeLens (False, 3 :: Int)
         return $ do
             writeRef (_1 `lensMap` s) False
             r ==> Just Nothing
@@ -359,8 +359,8 @@ tests runRefCreator = do
 
     runTest "chainTest1" $ do
         r <- newRef $ Just $ Just (3 :: Int)
-        q <- extRef r maybeLens (False, Nothing)
-        s <- extRef (_2 `lensMap` q) maybeLens (False, 0 :: Int)
+        q <- extendRef r maybeLens (False, Nothing)
+        s <- extendRef (_2 `lensMap` q) maybeLens (False, 0 :: Int)
         return $ do
             r ==> Just (Just 3)
             q ==> (True, Just 3)
@@ -419,14 +419,14 @@ tests runRefCreator = do
 
     runTest "undoTest" $ do
         r <- newRef (3 :: Int)
-        q <- extRef r (lens head $ flip (:)) []
+        q <- extendRef r (lens head $ flip (:)) []
         return $ do
             writeRef r 4
             q ==> [4, 3]
 
     runTest "undoTest2" $ do
         r <- newRef (3 :: Int)
-        q <- extRef r (lens head $ flip (:)) []
+        q <- extendRef r (lens head $ flip (:)) []
         return $ do
             q ==> [3]
 
@@ -470,7 +470,7 @@ tests runRefCreator = do
     runTest "time" $ do
         t1 <- newRef "z"
         r <- newRef "a"
-        q_ <- extRef r (lens fst (\(_, y) x -> (x, ""))) ("","")
+        q_ <- extendRef r (lens fst (\(_, y) x -> (x, ""))) ("","")
         let q = lensMap _2 q_
         t2 <- newRef "z"
         return $ do
@@ -593,7 +593,7 @@ tests runRefCreator = do
 
     runTest "bla2" $ do
         r <- newRef $ Just (3 :: Int)
-        q <- extRef r maybeLens (False, 0)
+        q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
             q2 = _2 `lensMap` q
         _ <- onChangeEq (readRef r) $ message . show
@@ -669,7 +669,7 @@ tests runRefCreator = do
         t1 <- newRef $ Just (3 :: Int)
         t <- newRef t1
         let r = join $ readRef t
-        q <- extRef r maybeLens (False, 0)
+        q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
             q2 = _2 `lensMap` q
         t2 <- newRef $ Just (3 :: Int)
@@ -702,7 +702,7 @@ tests runRefCreator = do
         let ctrl = lens fst (\(_,xs) x -> ("",x:xs)) `lensMap` buttons
 
             h b = do
-                q <- extRef b listLens (False, ("", []))
+                q <- extendRef b listLens (False, ("", []))
                 onChangeMemo (fst <$> readRef q) $ \bb -> return $ case bb of
                     False -> pure $ pure []
                     _ -> do
@@ -784,13 +784,13 @@ performanceTests :: forall m
     -> Int
     -> EffectM m ()
 
-performanceTests runRefCreator name n = do
+performanceTests runRefCreatorT name n = do
 
     let a ==? b = when (a /= b) $ fail $ show a ++ " /= " ++ show b
 
         r ==> v = readRef r >>= (==? v)
 
-    join $ runRefCreator $ \runRefWriter -> fmap runRefWriter $ case name of
+    join $ runRefCreatorT $ \runRefWriter -> fmap runRefWriter $ case name of
         "create" -> do
             rs <- replicateM n $ newRef 'x'
             return $ do
@@ -844,12 +844,12 @@ maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
 undoTr
     :: MonadRefCreator m =>
        (a -> a -> Bool)     -- ^ equality on state
-    -> Ref m a             -- ^ reference of state
+    -> RefOf m a             -- ^ reference of state
     ->   m ( RefReaderOf m (Maybe (RefWriterOf m ()))
            , RefReaderOf m (Maybe (RefWriterOf m ()))
            )  -- ^ undo and redo actions
 undoTr eq r = do
-    ku <- extRef r (undoLens eq) ([], [])
+    ku <- extendRef r (undoLens eq) ([], [])
     let try f = fmap (fmap (writeRefSimple ku) . f) $ readRef ku
     pure (try undo, try redo)
   where

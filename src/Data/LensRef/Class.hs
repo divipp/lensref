@@ -15,7 +15,7 @@ module Data.LensRef.Class
 
     , MonadRefReader (..)
     , MonadRefWriter (..)
-    , Ref
+    , RefOf
     , RefReaderOf
     , RefWriterOf
 
@@ -80,7 +80,7 @@ class ( MonadRefReader (RefReaderSimple r)
     -}
     readRefSimple  :: RefSimple r a -> RefReaderSimple r a
 
-    {- | Reference write.
+    {- | Reference writeRef.
     -}
     writeRefSimple :: RefSimple r a -> a -> RefWriterSimple r ()
 
@@ -124,7 +124,7 @@ type RefReaderOf m = RefReaderSimple (BaseRef m)
 type RefWriterOf m = RefWriterSimple (BaseRef m)
 
 -- | TODO
-type Ref m a = RefSimple (BaseRef m) a
+type RefOf m a = RefSimple (BaseRef m) a
 
 
 
@@ -166,31 +166,31 @@ class ( RefClass (BaseRef m)
 
     Suppose that @r@ is a reference and @k@ is a lens.
 
-    Law 1: @extRef@ applies @k@ on @r@ backwards, i.e. 
-    the result of @(extRef r k a0)@ should behaves exactly as @(lensMap k r)@.
+    Law 1: @extendRef@ applies @k@ on @r@ backwards, i.e. 
+    the result of @(extendRef r k a0)@ should behaves exactly as @(lensMap k r)@.
 
-    prop> (fmap (k .) $ extRef r k a0)  =  pure r
+    prop> (fmap (k .) $ extendRef r k a0)  =  pure r
 
-    Law 2: @extRef@ does not change the value of @r@:
+    Law 2: @extendRef@ does not change the value of @r@:
 
-    prop> (extRef r k a0 >> readRef r)  =  readRef r
+    prop> (extendRef r k a0 >> readRef r)  =  readRef r
 
     Law 3: Proper initialization of newly defined reference with @a0@:
 
-    prop> (extRef r k a0 >>= readRef)  =  (readRef r >>= set k a0)
+    prop> (extendRef r k a0 >>= readRef)  =  (readRef r >>= set k a0)
     -}
-    extRef :: Ref m b -> Lens' a b -> a -> m (Ref m a)
+    extendRef :: RefOf m b -> Lens' a b -> a -> m (RefOf m a)
 
     {- | @newRef@ extends the state @s@ in an independent way.
 
-    @newRef@ === @extRef unitRef united@
+    @newRef@ === @extendRef unitRef united@
     -}
-    newRef :: a -> m (Ref m a)
-    --newRef = extRef unitRef united
+    newRef :: a -> m (RefOf m a)
+    --newRef = extendRef unitRef united
 
     onChange :: RefReaderOf m a -> (a -> m b) -> m (RefReaderOf m b)
 
-    onChangeEq_ :: Eq a => RefReaderOf m a -> (a -> m b) -> m (Ref m b)
+    onChangeEq_ :: Eq a => RefReaderOf m a -> (a -> m b) -> m (RefOf m b)
     -- onChangeEq r f = onChangeMemo r $ pure . f
 
     onChangeEq :: Eq a => RefReaderOf m a -> (a -> m b) -> m (RefReaderOf m b)
@@ -250,7 +250,7 @@ instance (MonadRefReader m) => MonadRefReader (ReaderT w m) where
     liftRefReader = lift . liftRefReader
 
 instance MonadRefCreator m => MonadRefCreator (ReaderT w m) where
-    extRef r l       = lift . extRef r l
+    extendRef r l       = lift . extendRef r l
     newRef           = lift . newRef
     onChange r f     = ReaderT $ \st -> onChange r $ fmap (flip runReaderT st) f
     onChangeEq r f   = ReaderT $ \st -> onChangeEq r $ fmap (flip runReaderT st) f

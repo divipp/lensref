@@ -52,76 +52,71 @@ mergeBy p (x:xs) (y:ys) = case p x y of
 
 ----------------
 
---type SRef (m :: * -> *) = IORef
-
-class (Monad m, Applicative m) => NewRef m where
+class (Monad m, Applicative m) => SimpleRefClass m where
 
     -- simple reference
-    type SRef m :: * -> *
+    type SimpleRefOf m :: * -> *
 
-    newRef'   :: a -> m (SRef m a)
+    newSimpleRef   :: a -> m (SimpleRefOf m a)
+    readSimpleRef  :: SimpleRefOf m a -> m a
+    writeSimpleRef :: SimpleRefOf m a -> a -> m ()
 
-    modRef'   :: SRef m a -> StateT a m b -> m b
-    modRef' r s = do
-        a <- readRef' r
-        (x, a') <- runStateT s a
-        writeRef' r a'
-        return x
-
-    readRef'  :: SRef m a -> m a
-    readRef' r = modRef' r get
-
-    writeRef' :: SRef m a -> a -> m ()
-    writeRef' r a = modRef' r $ put a
+modSimpleRef :: SimpleRefClass m => SimpleRefOf m a -> StateT a m b -> m b
+modSimpleRef r s = do
+    a <- readSimpleRef r
+    (x, a') <- runStateT s a
+    writeSimpleRef r a'
+    return x
 
 -------------------
 
-instance NewRef IO where
-    type SRef IO = IORef
+instance SimpleRefClass IO where
+    type SimpleRefOf IO = IORef
 
---    {-# INLINE newRef' #-}
-    newRef' x = newIORef x
---    {-# INLINE readRef' #-}
-    readRef' r = readIORef r
---    {-# INLINE writeRef' #-}
-    writeRef' r a = writeIORef r a
-
--------------------
-
-instance NewRef m => NewRef (ReaderT r m) where
-    type SRef (ReaderT r m) = SRef m
-    newRef' = lift . newRef'
-    readRef' = lift . readRef'
-    writeRef' r = lift . writeRef' r
+--    {-# INLINE newSimpleRef #-}
+    newSimpleRef x = newIORef x
+--    {-# INLINE readSimpleRef #-}
+    readSimpleRef r = readIORef r
+--    {-# INLINE writeSimpleRef #-}
+    writeSimpleRef r a = writeIORef r a
 
 -------------------
 
-type NewRefT = StateT (Map.IntMap Any)
+instance SimpleRefClass m => SimpleRefClass (ReaderT r m) where
+    type SimpleRefOf (ReaderT r m) = SimpleRefOf m
+    newSimpleRef = lift . newSimpleRef
+    readSimpleRef = lift . readSimpleRef
+    writeSimpleRef r = lift . writeSimpleRef r
+
+-------------------
+
+-- TODO: wrap in newtype
+type SimpleRefT = StateT (Map.IntMap Any)
 
 nextKey :: Map.IntMap a -> Int
 nextKey = maybe 0 ((+1) . fst . fst) . Map.maxViewWithKey
 
 data Any where Any :: a -> Any
 
-newtype SRefProg a = SRefProg Int
+newtype RefOfSimpleRefT a = RefOfSimpleRefT Int
 
-instance (Monad m, Functor m) => NewRef (StateT (Map.IntMap Any) m) where
-    type SRef (StateT (Map.IntMap Any) m) = SRefProg 
-    newRef' a = do
+instance (Monad m, Functor m) => SimpleRefClass (SimpleRefT m) where
+    type SimpleRefOf (SimpleRefT m) = RefOfSimpleRefT 
+    newSimpleRef a = do
         i <- gets nextKey
-        let r = SRefProg i
-        writeRef' r a
+        let r = RefOfSimpleRefT i
+        writeSimpleRef r a
         return r
 
-    readRef' (SRefProg i) = gets $ unsafeGetAny . (Map.! i)
+    readSimpleRef (RefOfSimpleRefT i) = gets $ unsafeGetAny . (Map.! i)
       where
         unsafeGetAny :: Any -> a
         unsafeGetAny (Any a) = unsafeCoerce a
 
-    writeRef' (SRefProg i) a = modify $ Map.insert i (Any a)
+    writeSimpleRef (RefOfSimpleRefT i) a = modify $ Map.insert i (Any a)
 
-runNewRefT :: Monad m => NewRefT m a -> m a
-runNewRefT = flip evalStateT mempty
+runSimpleRefT :: Monad m => SimpleRefT m a -> m a
+runSimpleRefT = flip evalStateT mempty
 
 ---------------------------
 
@@ -137,7 +132,7 @@ future_ f = do
     writeRef s a
     pure a
 -}
-memoRead_ :: MonadRefCreator m => (Ref m (Maybe a) -> Maybe a -> m ()) -> m a -> m (m a) 
+memoRead_ :: MonadRefCreator m => (RefOf m (Maybe a) -> Maybe a -> m ()) -> m a -> m (m a) 
 memoRead_ writeRef g = do
     s <- newRef Nothing
     pure $ readRef s >>= \x -> case x of
