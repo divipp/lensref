@@ -245,6 +245,9 @@ instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
         register r True $ \(h, _) -> do
             runHandler $ h Kill
             liftRefReader' m >>= getHandler . f
+        RefCreatorT $ tell $ \msg -> MonadMonoid $ do
+            (h, _) <- runRefWriterT $ liftRefReader $ readRef_ r
+            runMonadMonoid $ h msg
         return $ fmap snd $ readRef $ pure r
 
     onChangeEq_ m f = do
@@ -257,12 +260,17 @@ instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
                 runHandler $ h' Kill
                 (h, b) <- getHandler $ f a
                 return ((== a), (h, b))
-
+        RefCreatorT $ tell $ \msg -> MonadMonoid $ do
+            (_, (h, _)) <- runRefWriterT $ liftRefReader $ readRef_ r
+            runMonadMonoid $ h msg
         return $ lensMap (_2 . _2) $ pure r
 
     onChangeMemo mr f = do
         r <- newReference ((const False, ((error "impossible #2", mempty, mempty) , error "impossible #1")), [])
         register r True upd
+        RefCreatorT $ tell $ \msg -> MonadMonoid $ do
+            ((_, ((_, h1, h2), _)), _) <- runRefWriterT $ liftRefReader $ readRef_ r
+            runMonadMonoid $ h1 msg >> h2 msg
         return $ fmap (snd . snd . fst) $ readRef_ r
       where
         upd st@((p, ((m'',h1'',h2''), _)), memo) = do

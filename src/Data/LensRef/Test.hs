@@ -775,6 +775,27 @@ tests runRefCreatorT = do
             send 1 "f"
 --            message' "f"
 -}
+    
+    runTest "onChange + onChange + onRegionStatusChange" $ do
+        a <- newRef True
+        b <- newRef ()
+        _ <- onChange (readRef a) $ \v -> case v of
+            True -> do
+                void $ onChange (readRef b) $ const $ onRegionStatusChange $ message_ . (++ "1") . show
+                void $ onChangeEq (readRef b) $ const $ onRegionStatusChange $ message_ . (++ "2") . show
+                void $ onChangeEq_ (readRef b) $ const $ onRegionStatusChange $ message_ . (++ "3") . show
+                void $ onChangeMemo (readRef b) $ const $ do
+                    onRegionStatusChange $ message_ . (++ "4") . show
+                    return $ onRegionStatusChange $ message_ . (++ "5") . show
+            False -> return ()
+        return $ do
+            writeRef a False
+            message' "Kill1"
+            message' "Kill2"
+            message' "Kill3"
+            message' "Kill4"
+            message' "Kill5"
+
     return ()
 
 performanceTests :: forall m

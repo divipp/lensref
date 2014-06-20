@@ -316,6 +316,9 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
         r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> do
             h Kill
             runRefReaderT' st m >>= noDependency st . getHandler st . flip unRefCreator st . f
+        tellHand st $ \msg -> do
+            (h, _) <- r
+            h msg
         return $ fmap snd $ RefReaderT $ RefCreatorT $ \_ -> r
 
     onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
@@ -329,6 +332,9 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
                 h' Kill
                 (h, b) <- getHandler st $ flip unRefCreator st $ f a
                 return ((== a), (h, b))
+        tellHand st $ \msg -> do
+            (_, (h, _)) <- r
+            h msg
 
         return $ fmap (snd . snd) $ RefReaderT $ RefCreatorT $ \_ -> r
 
@@ -342,6 +348,9 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
                 h' Kill
                 (h, b) <- getHandler st $ flip unRefCreator st $ f a
                 return ((== a), (h, b))
+        tellHand st $ \msg -> do
+            (_, (h, _)) <- readRef__ r
+            h msg
 
         return $ lensMap (_2 . _2) $ pure r
 
@@ -366,6 +375,9 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
                     let m' = flip unRefCreator st m_
                     (h2, b') <- getHandler st m'
                     return (((== a), ((m',h1,h2), b')), it: memo)
+        tellHand st $ \msg -> do
+            ((_, ((_, h1, h2), _)), _) <- readRef__ r
+            h1 msg >> h2 msg
         return $ readRef_ r <&> snd . snd . fst
 
     onRegionStatusChange h
