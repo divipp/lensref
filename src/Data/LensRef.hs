@@ -89,7 +89,7 @@ toEqRef :: (RefClass r, Eq a) => RefSimple r a -> EqRefSimple r a
 toEqRef r = EqRefCore <$> r <*> ((/=) <$> readRef r)
 
 -- | TODO
-newEqRef :: (MonadRefCreator m, Eq a) => a -> m (EqRef m a) 
+newEqRef :: (MonadRefCreator m, Eq a) => a -> m (EqRef m a)
 newEqRef = fmap toEqRef . newRef
 
 {- | An @EqRefSimple@ is a normal reference if we forget about the equality.

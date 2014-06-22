@@ -95,7 +95,7 @@ future_ f = do
     writeRef s a
     pure a
 -}
-memoRead_ :: MonadRefCreator m => (Ref m (Maybe a) -> Maybe a -> m ()) -> m a -> m (m a) 
+memoRead_ :: MonadRefCreator m => (Ref m (Maybe a) -> Maybe a -> m ()) -> m a -> m (m a)
 memoRead_ writeRef g = do
     s <- newRef Nothing
     pure $ readRef s >>= \x -> case x of

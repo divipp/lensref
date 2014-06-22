@@ -24,7 +24,6 @@ module Data.LensRef.Fast
 --import Debug.Trace
 import Data.Maybe
 import Data.Monoid
-import Data.IORef
 import qualified Data.IntMap.Strict as Map
 import Control.Applicative
 import Control.Monad.State.Strict
@@ -40,7 +39,7 @@ import Data.LensRef.Common
 
 -- | reference temporal state
 data RefState m where
-    RefState 
+    RefState
         :: a        -- reference value
         -> TIds m   -- reverse dependency (temporarily needed during topological sorting)
         -> RefState m
@@ -236,14 +235,14 @@ instance NewRef m => RefClass (RefHandler m) where
         }
 
     {-# INLINE readRefSimple #-}
-    readRefSimple (RefReaderTPure r) = RefReader $ \b -> RefCreator $ \st -> readWrite r Const b <&> getConst
+    readRefSimple (RefReaderTPure r) = RefReader $ \b -> RefCreator $ \_st -> readWrite r Const b <&> getConst
     readRefSimple (RefReader m) = RefReader $ \b -> m b >>= runRefReaderT_ b . readRef_
 
     writeRefSimple (RefReaderTPure r) a
-        = RefWriter $ RefCreator $ \st ->
+        = RefWriter $ RefCreator $ \_st ->
             readWrite r (const $ Identity a) False >>= runIdentity
     writeRefSimple (RefReader mr) a
-        = RefWriter $ mr False >>= \r -> RefCreator $ \st ->
+        = RefWriter $ mr False >>= \r -> RefCreator $ \_st ->
             readWrite r (const $ Identity a) False >>= runIdentity
 
     lensMap k (RefReaderTPure r) = pure $ RefHandler
@@ -256,12 +255,12 @@ instance NewRef m => RefClass (RefHandler m) where
         }
 
 instance NewRef m => MonadRefCreator (RefCreator m) where
-    {-# SPECIALIZE instance MonadRefCreator (RefCreator IO) #-}
+    --FIXME: causes many match_co warnings
+    -- {-# SPECIALIZE instance MonadRefCreator (RefCreator IO) #-}
 
     newRef a = RefCreator $ \st -> pure <$> newReference st a
 
     extRef m k a0 = do
-        st <- ask
         r <- RefCreator $ \st -> newReference st a0
         -- TODO: remove dropHandler?
         dropHandler $ RefCreator $ \st -> do
@@ -330,7 +329,7 @@ runRefCreator f = do
 -------------------- aux
 
 readRef_ :: NewRef m => RefHandler m a -> RefReader m a
-readRef_ r = RefReader $ \b -> RefCreator $ \st -> readWrite r Const b <&> getConst
+readRef_ r = RefReader $ \b -> RefCreator $ \_st -> readWrite r Const b <&> getConst
 
 ask :: Monad m => RefCreator m (GlobalVars m)
 ask = RefCreator return
@@ -451,4 +450,3 @@ instance NewRef m => MonadEffect (RefWriterOf_ (RefReader m)) where
 instance NewRef m => MonadEffect (RefCreator m) where
     type EffectM (RefCreator m) = m
     liftEffectM = RefCreator . const
-

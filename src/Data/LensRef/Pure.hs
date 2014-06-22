@@ -21,9 +21,7 @@ module Data.LensRef.Pure
     , liftRefWriter'
     ) where
 
--- import Data.Monoid
 import Data.Maybe
-import Data.List
 import qualified Data.IntSet as Set
 import qualified Data.IntMap as Map
 import Control.Applicative
@@ -31,7 +29,6 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
 import Control.Monad.Identity
-import Control.Monad.Trans.Control
 import Control.Lens.Simple
 
 --import Debug.Trace
@@ -72,7 +69,7 @@ data UpdateFunState m = UpdateFunState
     }
 
 data Reference m a = Reference
-    { readRef_  :: RefReader m a        
+    { readRef_  :: RefReader m a
     , writeRef_ :: a -> RefWriter m ()
     , register
         :: Bool                 -- True: run the following function initially
@@ -102,7 +99,7 @@ newtype instance RefWriterOf_ (RefReader m) a
 type RefWriter m = RefWriterOf_ (RefReader m)
 
 -- collecting handlers
--- invariant property: the St state is only exteded, not changed
+-- invariant property: the St state is only extended, not changed
 newtype RefCreator m a
     = RefCreator { unRefCreator :: WriterT (Handler m) (StateT (St m) m) a }
         deriving (Monad, Applicative, Functor, MonadFix)
@@ -391,4 +388,3 @@ readerToState g (ReaderT f) = StateT $ \s -> fmap (flip (,) s) $ f $ g s
 
 nextKey :: Map.IntMap a -> Int
 nextKey = maybe 0 ((+1) . fst . fst) . Map.maxViewWithKey
-

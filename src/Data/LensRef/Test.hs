@@ -13,8 +13,6 @@ module Data.LensRef.Test
     ) where
 
 import Data.Maybe
---import Data.Traversable
-import Data.IORef
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans
@@ -22,7 +20,6 @@ import Control.Arrow ((***))
 import Control.Lens.Simple
 
 import Data.LensRef
-import Data.LensRef.Class
 import Data.LensRef.TestEnv
 import Data.LensRef.Fast as Fast
 import Data.LensRef.Pure as Pure
@@ -140,7 +137,6 @@ tests runRefCreator liftRefWriter' = do
         let r = join $ readRef rr
         q <- extRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
-            q2 = _2 `lensMap` q
         q ==> (False, 0)
         writeRef' r1 $ Just 4
         q ==> (True, 4)
@@ -204,7 +200,6 @@ tests runRefCreator liftRefWriter' = do
                 pure $ if b then r1 else r2
         q <- extRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
-            q2 = _2 `lensMap` q
         q ==> (False, 0)
         writeRef' r1 $ Just 4
         q ==> (True, 4)
@@ -402,7 +397,7 @@ tests runRefCreator liftRefWriter' = do
     runTestSimple "time" $ do
         t1 <- newRef "z"
         r <- newRef "a"
-        q_ <- extRef r (lens fst (\(_, y) x -> (x, ""))) ("","")
+        q_ <- extRef r (lens fst (\_ x -> (x, ""))) ("","")
         let q = lensMap _2 q_
         t2 <- newRef "z"
         writeRef' q "."
@@ -544,6 +539,8 @@ tests runRefCreator liftRefWriter' = do
                     when (s == "g") $ writeRef r 0
                     message $ "Hi " ++ s
                 pure $ pure ()
+
+            _ -> error $ "Unexpected value for r in kill & block: " ++ show i
 
         pure ()
               ) $ do
@@ -804,6 +801,7 @@ performanceTests runRefCreator liftRefWriter' name n = do
             r1' ==> 'x'
             r2' ==> 'y'
 
+        _ -> error $ "No such test: " ++ name
 
 -------------------------- auxiliary definitions
 
@@ -835,6 +833,3 @@ undoLens eq = lens get set where
     get = head . fst
     set (x' : xs, ys) x | eq x x' = (x: xs, ys)
     set (xs, _) x = (x : xs, [])
-
-
-

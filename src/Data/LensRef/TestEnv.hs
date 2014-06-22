@@ -23,7 +23,6 @@ import Control.Lens.Simple hiding (view)
 import Unsafe.Coerce
 
 import Data.LensRef
-import Data.LensRef.Class
 import Data.LensRef.Common
 
 --------------------------
@@ -59,7 +58,7 @@ sRefProg = SRefProg
 newtype SRefProg a = SRefProg { runSRefProg :: forall x . StateT a (Prog) x -> Prog x }
 
 instance NewRef (Prog) where
-    type SRef (Prog) = SRefProg 
+    type SRef (Prog) = SRefProg
     newRef' = singleton . NewRef
     modRef' = runSRefProg
 --    newId = singleton NewId
@@ -116,7 +115,7 @@ getProg' p = case runIdentity . viewT $ p of
     Error' s :>>= p -> do
         fail' $ "end expected instead of unfail " ++ s
         getProg' $ p ()
-  
+
 
 type Er = Writer [Either (Either String String) String] --ErrorT String (Writer [String])
 
@@ -367,6 +366,3 @@ runTest runRefCreator name r p0 = showError $ handEr name $ flip evalStateT (ST 
 
 showError [] = pure ()
 showError xs = fail $ "\n" ++ unlines xs
-
-
-

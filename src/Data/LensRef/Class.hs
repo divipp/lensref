@@ -166,7 +166,7 @@ class ( RefClass (BaseRef m)
 
     Suppose that @r@ is a reference and @k@ is a lens.
 
-    Law 1: @extRef@ applies @k@ on @r@ backwards, i.e. 
+    Law 1: @extRef@ applies @k@ on @r@ backwards, i.e.
     the result of @(extRef r k a0)@ should behaves exactly as @(lensMap k r)@.
 
     prop> (fmap (k .) $ extRef r k a0)  =  pure r

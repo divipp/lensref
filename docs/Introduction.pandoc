@@ -260,7 +260,7 @@ Before making a summay, notice that
 > newRef :: a -> CreateRef (Ref a)
 > newRef = extRef unitRef united
 
-Here `unitRef` can be any reference which has type `Ref ()`.  
+Here `unitRef` can be any reference which has type `Ref ()`.
 
 We add `unitRef` to the set of basic reference operations (it is a constant):
 
@@ -286,7 +286,7 @@ The discussed data types and operations so far are the following:
 > extRef   :: Ref b -> Lens' a b -> a -> CreateRef (Ref a)
 > writeRef :: Ref a -> a -> WriteRef ()
 
-`liftReadRef` is handy because during reference creation we can read existing references.  
+`liftReadRef` is handy because during reference creation we can read existing references.
 
 `liftCreateRef` is handy because during reference write we can create references
 (a use case is to create a new reference and give it as a value of a reference-reference).
