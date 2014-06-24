@@ -796,6 +796,21 @@ tests runRefCreatorT = do
             message' "Kill4"
             message' "Kill5"
 
+    runTest "issue1" $ do
+        r <- newRef (0 :: Int)
+        le <- onChangeEq_ (fmap (min 1) $ readRef r) $ \b -> case b of
+            0 -> return $ pure 0
+            1 -> onChangeEq_ (readRef r) return <&> readRef
+
+        _ <- onChange (liftM2 (,) (readRef r) (join $ readRef le)) $ message . show
+
+        return $ do
+            message' "(0,0)"
+            send r 1
+            message' "(1,1)"
+            send r 2
+            message' "(2,2)"
+
     return ()
 
 performanceTests :: forall m
