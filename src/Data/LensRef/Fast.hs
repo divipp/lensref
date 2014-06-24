@@ -299,29 +299,30 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
     onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
     onChange m f = RefCreatorT $ \st -> do
         r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> do
-            h Kill
-            runRefReaderT' st m >>= noDependency st . getHandler st . flip unRefCreator st . f
+            a <- runRefReaderT' st m
+            noDependency st $ do
+                h Kill
+                getHandler st . flip unRefCreator st $ f a
         tellHand st $ \msg -> do
             (h, _) <- r
             h msg
-        return $ fmap snd $ RefReaderT $ RefCreatorT $ \_ -> r
+        return $ RefReaderT $ RefCreatorT $ \_ -> r <&> snd
 
     onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
     onChangeEq m f = RefCreatorT $ \st -> do
-        r <- newReadReference st (const False, (const $ pure (), error "impossible #3"))
-          $ \it@(p, (h', _)) -> do
+        r <- newReadReference st (const False, (const $ pure (), error "impossible #3")) $ \it@(p, (h, _)) -> do
             a <- runRefReaderT' st m
             noDependency st $ if p a
               then return it
               else do
-                h' Kill
-                (h, b) <- getHandler st $ flip unRefCreator st $ f a
-                return ((== a), (h, b))
+                h Kill
+                hb <- getHandler st $ flip unRefCreator st $ f a
+                return ((== a), hb)
         tellHand st $ \msg -> do
             (_, (h, _)) <- r
             h msg
 
-        return $ fmap (snd . snd) $ RefReaderT $ RefCreatorT $ \_ -> r
+        return $ RefReaderT $ RefCreatorT $ \_ -> r <&> snd . snd
 
     onChangeEq_ m f = RefCreatorT $ \st -> do
         r <- newReference st (const False, (const $ pure (), error "impossible #3"))
@@ -341,8 +342,8 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
 
     onChangeMemo (RefReaderTPure a) f = fmap RefReaderTPure $ join $ f a
     onChangeMemo (RefReaderT mr) f = RefCreatorT $ \st -> do
-        r <- newReference st ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
-        writeRef_ r True $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> do
+        r <- newReadReference st ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
+          $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> do
             let it = (p, (m'', h1''))
             a <- flip unRefCreator st mr
             noDependency st $ if p a
@@ -360,10 +361,12 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
                     let m' = flip unRefCreator st m_
                     (h2, b') <- getHandler st m'
                     return (((== a), ((m',h1,h2), b')), it: memo)
+
         tellHand st $ \msg -> do
-            ((_, ((_, h1, h2), _)), _) <- readRef__ r
+            ((_, ((_, h1, h2), _)), _) <- r
             h1 msg >> h2 msg
-        return $ readRef_ r <&> snd . snd . fst
+
+        return $ RefReaderT $ RefCreatorT $ \_ -> r <&> snd . snd . fst
 
     onRegionStatusChange h
         = RefCreatorT $ \st -> tellHand st h
