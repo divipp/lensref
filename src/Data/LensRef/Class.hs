@@ -41,11 +41,6 @@ import Control.Lens.Simple --(Lens', united)
 
 {- |
 Type class for references which can be joined and on which lenses can be applied.
-
-The join operation is 'join' from "Control.Monad":
-If @(r :: RefReaderSimple r (RefSimple r a))@ then @(join r :: RefSimple r a)@.
-This is possible because reference operations work with @(RefReaderSimple r (r a))@ instead
-of just @(r a)@. For more compact type signatures, @(RefReaderSimple r (r a))@ is called @(RefSimple r a)@.
 -}
 class ( MonadRefReader (RefReaderSimple r)
       , MonadRefWriter (RefWriterSimple r)
@@ -84,6 +79,8 @@ class ( MonadRefReader (RefReaderSimple r)
     -}
     writeRefSimple :: RefSimple r a -> a -> RefWriterSimple r ()
 
+    joinRef :: RefReaderSimple r (RefSimple r a) -> RefSimple r a
+
 data family RefWriterOf_ (m :: * -> *) :: * -> *
 
 {- |
@@ -96,7 +93,7 @@ adding a @RefWriterOf_@ data family outside of 'RefClass'.
 type RefWriterSimple m = RefWriterOf_ (RefReaderSimple m)
 
 -- | Reference wrapped into a RefReaderSimple monad. See the documentation of 'RefClass'.
-type RefSimple r a = RefReaderSimple r (r a)
+type RefSimple (r :: * -> *) = r
 
 infixr 8 `lensMap`
 

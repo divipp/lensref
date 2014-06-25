@@ -6,6 +6,7 @@ import Control.Concurrent
 
 import Data.LensRef.Class
 import Data.LensRef.Fast
+--import Data.LensRef.Pure
 
 main :: IO ()
 main = do
