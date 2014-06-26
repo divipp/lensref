@@ -58,8 +58,10 @@ newtype RefHandler m a = RefHandler
     { runRefHandler
         :: forall b
         .  (a -> RefFunctor m b a)
-        -> RefReaderT m (b, Bool, Bool -> m ()) -- True: run the trigger initially also
+        -> BaseR m b
     }
+
+type BaseR m b = RefReaderT m (b, Bool, Bool -> m ()) -- True: run the trigger initially also
 
 newtype RefFunctor m b a = RefFunctor { runRefFunctor :: (b, Bool, m a) }
 
@@ -195,7 +197,9 @@ newReference st a0 = do
                             ys <- filterM del =<< ch p
                             topSort $ mergeBy (\(i, _) (j, _) -> compare i j) ps ys
 
-                    topSort as
+                        del' (_, n) = readSimpleRef n <&> Map.null . _reverseDeps
+
+                    topSort =<< filterM del' as
 
                     p <- readSimpleRef (_postpone st)
                     writeSimpleRef (_postpone st) $ return ()
@@ -257,8 +261,7 @@ joinRefHandler (RefReaderT (RefCreatorT m)) = RefHandler $ \ff -> RefReaderT $ R
         r <- newReadReference st (const $ pure ()) $ \kill -> do
             kill Kill
             ref <- m st
-            noDependency st $ fmap fst $ getHandler st $ writeRef_ rep st ref init $ \a -> do
-                (^. _3) . runRefFunctor $ ff a
+            noDependency st $ fmap fst $ getHandler st $ runRefReaderT' st (runRefHandler ref ff) >>= ($ init) . (^. _3)
 
         tellHand st $ \msg -> r >>= ($ msg)
 
