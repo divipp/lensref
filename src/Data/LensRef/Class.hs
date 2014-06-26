@@ -27,6 +27,9 @@ module Data.LensRef.Class
     -- * Other
     , MonadMemo (..)
     , MonadEffect (..)
+
+    , RefHandler_
+    , RefAction (..)
     ) where
 
 
@@ -142,6 +145,28 @@ class ( MonadRefReader m
     r `modRef` f = readRef r >>= writeRef r . f
 
 
+type RefHandler_ m a =
+        forall f
+        .  (RefAction f, RefCreatorOf f ~ m)
+        => (a -> RefActionFunctor f a)
+        -> f ()
+
+class ( Functor (RefActionFunctor f)
+      , MonadRefCreator (RefCreatorOf f)
+      )
+    => RefAction (f :: * -> *) where
+
+    type RefActionFunctor f :: * -> *
+    type RefCreatorOf f :: * -> *
+
+    buildRefAction
+        :: (a -> RefActionFunctor f a)
+        -> RefReaderOf (RefCreatorOf f) a
+        -> ((a -> a) -> RefWriterOf (RefCreatorOf f) ())
+        -> RefRegOf (RefCreatorOf f) a
+        -> f ()
+
+    joinRefAction :: RefReaderOf (RefCreatorOf f) (f ()) -> f ()
 
 
 {- | Monad for reference creation. Reference creation is not a method
@@ -158,6 +183,8 @@ class ( RefClass (BaseRef m)
       , EffectM (RefWriterOf m) ~ EffectM m
       )
     => MonadRefCreator m where
+
+    type RefRegOf m a :: *
 
     {- | Reference creation by extending the state of an existing reference.
 

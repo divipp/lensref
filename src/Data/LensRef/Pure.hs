@@ -70,32 +70,9 @@ data UpdateFunState m = UpdateFunState
     , _updateFun :: RefWriterT m ()    -- what to run if at least one of the dependency changes
     }
 
-newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ m a }
+newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ (RefCreatorT m) a }
 
-type RefHandler_ m a =
-        forall f
-        .  (RefAction f, Base_ f ~ m)
-        => (a -> RefActionFunctor f a)
-        -> f ()
 
-class (Functor (RefActionFunctor f), Functor (Base_ f)) => RefAction (f :: * -> *) where
-
-    type RefActionFunctor f :: * -> *
-    type Base_ f :: * -> *
-
-    buildRefAction
-        :: (a -> RefActionFunctor f a)
-        -> RefReaderT_ f a
-        -> (Bool -> (a -> HandT_ f a) -> RefCreatorT_ f ())
-        -> ((a -> a) -> RefWriterT_ f ())
-        -> f ()
-
-    joinRefAction :: RefReaderT_ f (f ()) -> f ()
-
-type RefReaderT_ f = RefReaderT (Base_ f)
-type RefWriterT_ f = RefWriterT (Base_ f)
-type RefCreatorT_ f = RefCreatorT (Base_ f)
-type HandT_ f = HandT (Base_ f)
 
 {-
 RefCreator ->  (RefReader <-> RefWriter <-> RefHand?)
@@ -143,7 +120,8 @@ newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReaderT m b }
 
 instance (Monad m, Applicative m) => RefAction (ReaderAction b m) where
     type RefActionFunctor (ReaderAction b m) = Const b
-    type Base_ (ReaderAction b m) = m
+    type RefCreatorOf (ReaderAction b m) = RefCreatorT m
+
     buildRefAction f a _ _ = ReaderAction $ a <&> getConst . f
     joinRefAction m = ReaderAction $ m >>= runReaderAction
 
@@ -151,8 +129,9 @@ instance (Monad m, Applicative m) => RefAction (ReaderAction b m) where
 
 instance (Monad m, Applicative m) => RefAction (RefWriterT m) where
     type RefActionFunctor (RefWriterT m) = Identity
-    type Base_ (RefWriterT m) = m
-    buildRefAction f _ _ g = g $ runIdentity . f
+    type RefCreatorOf (RefWriterT m) = RefCreatorT m
+
+    buildRefAction f _ g _ = g $ runIdentity . f
     joinRefAction m = join $ liftRefReader m
 
 -------------------- register action
@@ -161,8 +140,9 @@ newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCr
 
 instance (Monad m, Applicative m) => RefAction (RegisterAction m) where
     type RefActionFunctor (RegisterAction m) = HandT m
-    type Base_ (RegisterAction m) = m
-    buildRefAction f _ g _ = RegisterAction $ \init -> g init f
+    type RefCreatorOf (RegisterAction m) = RefCreatorT m
+
+    buildRefAction f _ _ g = RegisterAction $ \init -> g init f
     joinRefAction m = RegisterAction $ \init -> do
         r <- newReference mempty
         register r True $ \kill -> do
@@ -258,25 +238,30 @@ newReference a = RefCreatorT $ do
 
     pure $ RefHandler $ \ff ->
         buildRefAction ff am
-            (wr True)
             (RefWriterT . fmap fst . runWriterT . unRefCreator . wr False True . (return .))
+            (wr True)
 
 
 instance (Monad m, Applicative m) => RefClass (RefHandler m) where
     type RefReaderSimple (RefHandler m) = RefReaderT m
 
-    unitRef = RefHandler $ \f -> buildRefAction f (pure ()) (\_ _ -> pure ()) (\_ -> pure ())
+    unitRef = RefHandler $ \f -> buildRefAction f (pure ()) (\_ -> pure ()) (\_ _ -> pure ())
 
     readRefSimple r = runReaderAction $ runRefHandler r Const
 
     writeRefSimple r = runRefHandler r . const . Identity
 
-    lensMap k (RefHandler r) = RefHandler $ r . k
+    lensMap = lensMap_
 
     joinRef mr = RefHandler $ \f -> joinRefAction (mr <&> \r -> runRefHandler r f)
 
+lensMap_ :: (Monad m, Applicative m) => Lens' a b -> RefHandler m a -> RefHandler m b
+lensMap_ k (RefHandler r) = RefHandler $ r . k
 
-instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
+
+instance (Monad m, Applicative m) => MonadRefCreator (RefCreatorT m) where
+
+    type RefRegOf (RefCreatorT m) a = Bool -> (a -> HandT m a) -> RefCreatorT m ()
 
     newRef = newReference
 
@@ -401,7 +386,7 @@ instance (Monad m, Applicative m) => MonadRefReader (RefWriterOf_ (RefReaderT m)
 instance (Monad m, Applicative m) => MonadRefWriter (RefWriterOf_ (RefReaderT m)) where
     liftRefWriter = id
 
-instance (SimpleRefClass m) => MonadMemo (RefCreatorT m) where
+instance (Monad m, Applicative m) => MonadMemo (RefCreatorT m) where
     memoRead = memoRead_ $ \r -> RefCreatorT . lift . runRefWriterT . writeRefSimple r
 
 instance (Monad m, Applicative m) => MonadEffect (RefWriterOf_ (RefReaderT m)) where

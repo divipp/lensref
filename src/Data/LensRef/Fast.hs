@@ -54,34 +54,8 @@ data TriggerState m = TriggerState
     }
 
 -- | reference handler
-newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ m a }
+newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ (RefCreatorT m) a }
 
-type RefHandler_ m a =
-        forall f
-        .  (RefAction f, Base_ f ~ m)
-        => (a -> RefActionFunctor f a)
-        -> f ()
-
-class (Functor (RefActionFunctor f), Functor (Base_ f)) => RefAction (f :: * -> *) where
-
-    type RefActionFunctor f :: * -> *
-    type Base_ f :: * -> *
-
-    buildRefAction
-        :: (a -> RefActionFunctor f a)
-        -> RefReaderT_ f a
-        -> (Bool -> (a -> HandT_ f a) -> RefCreatorT_ f ())
-        -> ((a -> a) -> RefWriterT_ f ())
-        -> f ()
-
-    joinRefAction :: RefReaderT_ f (f ()) -> f ()
-
-type RefReaderT_ f = RefReaderT (Base_ f)
-type RefWriterT_ f = RefWriterT (Base_ f)
-type RefCreatorT_ f = RefCreatorT (Base_ f)
-type HandT_ f = HandT (Base_ f)
-
-type HandT (m :: * -> *) = m
 
 -------------------- reader action
 
@@ -89,7 +63,8 @@ newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReaderT m b }
 
 instance SimpleRefClass m => RefAction (ReaderAction b m) where
     type RefActionFunctor (ReaderAction b m) = Const b
-    type Base_ (ReaderAction b m) = m
+    type RefCreatorOf (ReaderAction b m) = RefCreatorT m
+
     buildRefAction f a _ _ = ReaderAction $ a <&> getConst . f
     joinRefAction m = ReaderAction $ m >>= runReaderAction
 
@@ -97,8 +72,9 @@ instance SimpleRefClass m => RefAction (ReaderAction b m) where
 
 instance SimpleRefClass m => RefAction (RefWriterT m) where
     type RefActionFunctor (RefWriterT m) = Identity
-    type Base_ (RefWriterT m) = m
-    buildRefAction f _ _ g = g $ runIdentity . f
+    type RefCreatorOf (RefWriterT m) = RefCreatorT m
+
+    buildRefAction f _ g _ = g $ runIdentity . f
     joinRefAction m = join $ liftRefReader m
 
 -------------------- register action
@@ -107,8 +83,9 @@ newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCr
 
 instance SimpleRefClass m => RefAction (RegisterAction m) where
     type RefActionFunctor (RegisterAction m) = HandT m
-    type Base_ (RegisterAction m) = m
-    buildRefAction f _ g _ = RegisterAction $ \init -> g init f
+    type RefCreatorOf (RegisterAction m) = RefCreatorT m
+
+    buildRefAction f _ _ g = RegisterAction $ \init -> g init f
     joinRefAction m = RegisterAction $ \init -> RefCreatorT $ \st -> do
 
         r <- newReadReference st (const $ pure ()) $ \kill -> do
@@ -164,6 +141,8 @@ type RefWriterT m = RefWriterOf_ (RefReaderT m)
 -- trigger handlers
 -- The registered triggers may be killed, blocked and unblocked via the handler.
 type Handler m = RegionStatusChangeHandler m
+
+type HandT (m :: * -> *) = m
 
 ------------------------------
 
@@ -261,8 +240,8 @@ newReference st a0 = do
 
     pure $ RefHandler $ \ff ->
         buildRefAction ff am
-            (wr True)
             (RefWriterT . wr False True . (return .))
+            (wr True)
 
 
 regTrigger :: forall m a . SimpleRefClass m => GlobalVars m -> Id m -> Ids m -> (a -> m a) -> m ()
@@ -313,7 +292,7 @@ instance SimpleRefClass m => RefClass (RefHandler m) where
     {-# SPECIALIZE instance RefClass (RefHandler IO) #-}
     type RefReaderSimple (RefHandler m) = RefReaderT m
 
-    unitRef = RefHandler $ \f -> buildRefAction f (pure ()) (\_ _ -> pure ()) (\_ -> pure ())
+    unitRef = RefHandler $ \f -> buildRefAction f (pure ()) (\_ -> pure ()) (\_ _ -> pure ())
 
     readRefSimple r = runReaderAction $ runRefHandler r Const
 
@@ -327,6 +306,8 @@ instance SimpleRefClass m => RefClass (RefHandler m) where
 
 instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
     {-# SPECIALIZE instance MonadRefCreator (RefCreatorT IO) #-}
+
+    type RefRegOf (RefCreatorT m) a = Bool -> (a -> HandT m a) -> RefCreatorT m ()
 
     newRef a = RefCreatorT $ \st -> newReference st a
 
