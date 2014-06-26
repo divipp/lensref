@@ -74,14 +74,34 @@ newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ m a }
 
 type RefHandler_ m a =
         forall f
-        .  (RefAction f, Functor (RefActionFunctor f m))
-        => (a -> RefActionFunctor f m a)
-        -> f m ()
+        .  (RefAction f, Base_ f ~ m)
+        => (a -> RefActionFunctor f a)
+        -> f ()
 
-class RefAction (f :: (* -> *) -> * -> *) where
-    type RefActionFunctor f (m :: * -> *) :: * -> *
-    buildRefAction :: Monad m => (a -> RefActionFunctor f m a) -> RefReaderT m a -> (Bool -> Bool -> (a -> HandT m a) -> RefCreatorT m ()) -> f m ()
-    mapRefAction :: (Monad m, Applicative m) => RefReaderT m (f m ()) -> ((f m () -> RefCreatorT m ()) -> RefCreatorT m ()) -> f m ()
+class (Functor (RefActionFunctor f), Functor (Base_ f)) => RefAction (f :: * -> *) where
+
+    type RefActionFunctor f :: * -> *
+    type Base_ f :: * -> *
+
+    buildRefAction
+        :: (a -> RefActionFunctor f a)
+        -> RefReaderT_ f a
+        -> (Bool -> Bool -> (a -> HandT_ f a) -> RefCreatorT_ f ())
+        -> f ()
+    mapRefAction
+        :: RefReaderT_ f (f ())
+        -> ((f () -> RefCreatorT_ f ()) -> RefCreatorT_ f ())
+        -> f ()
+
+type RefReaderT_ f = RefReaderT (Base_ f)
+type RefCreatorT_ f = RefCreatorT (Base_ f)
+type HandT_ f = HandT (Base_ f)
+
+{-
+RefCreator ->  RefReader, RefWriter, RefHand?
+
+
+-}
 
 -----------------------------------------------
 
@@ -105,6 +125,9 @@ newtype instance RefWriterOf_ (RefReaderT m) a
 
 type RefWriterT m = RefWriterOf_ (RefReaderT m)
 
+newtype RefWriterT_ m a = RefWriterT_ { runRefWriterT_ :: RefWriterOf_ (RefReaderT m) a }
+        deriving (Monad, Applicative, Functor) -- , MonadState (St m))
+
 -- collecting handlers
 -- invariant property: the St state is only exteded, not changed
 newtype RefCreatorT m a
@@ -115,24 +138,27 @@ newtype RefCreatorT m a
 
 newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReaderT m b }
 
-instance RefAction (ReaderAction b) where
-    type RefActionFunctor (ReaderAction b) m = Const b
+instance (Monad m, Applicative m) => RefAction (ReaderAction b m) where
+    type RefActionFunctor (ReaderAction b m) = Const b
+    type Base_ (ReaderAction b m) = m
     buildRefAction f a _ = ReaderAction $ a <&> getConst . f
     mapRefAction m _ = ReaderAction $ m >>= runReaderAction
 
 -------------------- writer action
 
-instance RefAction RefCreatorT where
-    type RefActionFunctor RefCreatorT m = Identity
-    buildRefAction f _ g = g True False $ return . runIdentity . f
-    mapRefAction m _ = liftRefReader m >>= id
+instance (Monad m, Applicative m) => RefAction (RefWriterT_ m) where
+    type RefActionFunctor (RefWriterT_ m) = Identity
+    type Base_ (RefWriterT_ m) = m
+    buildRefAction f _ g = RefWriterT_ . RefWriterT . fmap fst . runWriterT . unRefCreator $ g True False $ return . runIdentity . f
+    mapRefAction m _ = RefWriterT_ $ liftRefReader m >>= runRefWriterT_
 
 -------------------- register action
 
 newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCreatorT m a }
 
-instance RefAction RegisterAction where
-    type RefActionFunctor RegisterAction m = HandT m
+instance (Monad m, Applicative m) => RefAction (RegisterAction m) where
+    type RefActionFunctor (RegisterAction m) = HandT m
+    type Base_ (RegisterAction m) = m
     buildRefAction f _ g = RegisterAction $ \init -> g init True f
     mapRefAction _ f = RegisterAction $ \init -> f $ ($ init) . runRegisterAction
          
@@ -143,21 +169,21 @@ newReference :: forall m a . (Monad m, Applicative m) => a -> RefCreatorT m (Ref
 newReference a = RefCreatorT $ do
     ir <- use $ _1 . to nextKey
 
-    let
-        getVal = asks $ unsafeGet . fromMaybe (error "fatal: cant find ref value") . Map.lookup ir
+    let getVal :: RefReaderT m a
+        getVal = RefReaderT $ asks $ unsafeGet . fromMaybe (error "fatal: cant find ref value") . Map.lookup ir
         setVal :: MonadState (St m) n => a -> n ()
         setVal a = _1 %= Map.insert ir (Dyn a)
 
     setVal a
 
-    let am = RefReaderT $ do
-            lift . tell $ Set.singleton ir
+    let am = do
+            RefReaderT $ lift . tell $ Set.singleton ir
             getVal
 
     pure $ RefHandler $ \ff -> buildRefAction ff am $ \init rep upd -> RefCreatorT $ do
 
             let gv = mapStateT (fmap (\((a,st),ids) -> ((a,ids),st)) . runWriterT)
-                        $ runHandT $ liftRefReader' (RefReaderT getVal) >>= upd
+                        $ runHandT $ liftRefReader' getVal >>= upd
 
             (a, ih) <- lift gv
 
@@ -227,8 +253,7 @@ instance (Monad m, Applicative m) => RefClass (RefHandler m) where
 
     readRefSimple r = runReaderAction $ runRefHandler r Const
 
-    writeRefSimple r a = 
-        RefWriterT . fmap fst . runWriterT . unRefCreator $ runRefHandler r (const $ Identity a)
+    writeRefSimple r = runRefWriterT_ . runRefHandler r . const . Identity
 
     lensMap k (RefHandler r) = RefHandler $ r . k
 
