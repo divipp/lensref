@@ -28,13 +28,20 @@ module Data.LensRef.Class
     , MonadMemo (..)
     , MonadEffect (..)
 
+    , RefHandler (..)
     , RefHandler_
     , RefAction (..)
+    , readRefSimple_
+    , writeRefSimple_
+    , lensMap_
+    , unitRef_
+    , joinRef_
     ) where
 
 
 import Control.Applicative
 import Control.Monad.Reader
+import Control.Monad.Identity
 --import Control.Monad.Writer
 import Control.Monad.Trans.Control
 import Control.Lens.Simple --(Lens', united)
@@ -145,6 +152,10 @@ class ( MonadRefReader m
     r `modRef` f = readRef r >>= writeRef r . f
 
 
+------------------------------------------
+
+newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ m a }
+
 type RefHandler_ m a =
         forall f
         .  (RefAction f, RefCreatorOf f ~ m)
@@ -167,6 +178,52 @@ class ( Functor (RefActionFunctor f)
         -> f ()
 
     joinRefAction :: RefReaderOf (RefCreatorOf f) (f ()) -> f ()
+
+    buildUnitRefAction :: (() -> RefActionFunctor f ()) -> f ()
+
+-------------------- reader action
+
+newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReaderOf m b }
+
+instance MonadRefCreator m => RefAction (ReaderAction b m) where
+    type RefActionFunctor (ReaderAction b m) = Const b
+    type RefCreatorOf (ReaderAction b m) = m
+
+    buildRefAction f a _ _ = ReaderAction $ a <&> getConst . f
+    joinRefAction m = ReaderAction $ m >>= runReaderAction
+    buildUnitRefAction f = ReaderAction $ pure $ getConst $ f ()
+
+readRefSimple_ :: MonadRefCreator m => RefHandler m a -> RefReaderOf m a
+readRefSimple_ r = runReaderAction $ runRefHandler r Const
+
+-------------------- writer action
+
+newtype WriterAction m a = WriterAction { runWriterAction :: RefWriterOf m () }
+
+instance MonadRefCreator m => RefAction (WriterAction m) where
+    type RefActionFunctor (WriterAction m) = Identity
+    type RefCreatorOf (WriterAction m) = m
+
+    buildRefAction f _ g _ = WriterAction $ g $ runIdentity . f
+    joinRefAction m = WriterAction $ liftRefReader m >>= runWriterAction
+    buildUnitRefAction _ = WriterAction $ pure ()
+
+writeRefSimple_ :: MonadRefCreator m => RefHandler m a -> a -> RefWriterOf m ()
+writeRefSimple_ r = runWriterAction . runRefHandler r . const . Identity
+
+---------- lensmap
+
+lensMap_ :: MonadRefCreator m => Lens' a b -> RefHandler m a -> RefHandler m b
+lensMap_ k (RefHandler r) = RefHandler $ r . k
+
+unitRef_ :: MonadRefCreator m => RefHandler m ()
+unitRef_ = RefHandler buildUnitRefAction
+
+joinRef_ :: MonadRefCreator m => RefReaderOf m (RefHandler m a) -> RefHandler m a
+joinRef_ mr = RefHandler $ \f -> joinRefAction (mr <&> \r -> runRefHandler r f)
+
+
+
 
 
 {- | Monad for reference creation. Reference creation is not a method
