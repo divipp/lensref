@@ -250,38 +250,34 @@ regTrigger st (i, oir) ih ma = do
             modSimpleRef (_postpone st) $ modify (>> _updateFun ts)
 
 
-joinRefHandler :: (SimpleRefClass m) => RefReaderT m (RefHandler m a) -> RefHandler m a
-joinRefHandler (RefReaderTPure r) = r
-joinRefHandler (RefReaderT (RefCreatorT m)) = RefHandler $ \ff -> RefReaderT $ RefCreatorT $ \st -> do
-    ref0 <- m st
-    runRefReaderT' st (runRefHandler ref0 ff) <&> \(b, rep, cr) -> (,,) b rep $ \init -> case rep of
-      False -> cr init
-      True -> do
-
-        r <- newReadReference st (const $ pure ()) $ \kill -> do
-            kill Kill
-            ref <- m st
-            noDependency st $ fmap fst $ getHandler st $ runRefReaderT' st (runRefHandler ref ff) >>= ($ init) . (^. _3)
-
-        tellHand st $ \msg -> r >>= ($ msg)
-
 instance SimpleRefClass m => RefClass (RefHandler m) where
+    {-# SPECIALIZE instance RefClass (RefHandler IO) #-}
     type RefReaderSimple (RefHandler m) = RefReaderT m
 
     unitRef = RefHandler $ \x -> pure $ case runRefFunctor $ x () of
         (b, rep, _) -> (b, rep, const $ pure ())
 
-    readRefSimple = readRef_
+    readRefSimple r = runRefHandler r (\a -> RefFunctor (a, False, error "impossible")) <&> (^. _1)
 
     writeRefSimple r a = RefWriterT $ RefCreatorT $ \st ->
         writeRef_ False st r True $ \_ -> pure a
 
-    lensMap k r = lensMap_ r k
+    lensMap k (RefHandler r) = RefHandler $ r . k
 
-    joinRef = joinRefHandler
+    joinRef (RefReaderTPure r) = r
+    joinRef (RefReaderT (RefCreatorT m)) = RefHandler $ \ff -> RefReaderT $ RefCreatorT $ \st -> do
+        ref0 <- m st
+        runRefReaderT' st $ runRefHandler ref0 ff <&> \it@(_, rep, _) -> case rep of 
+          False -> it
+          True -> joinRef' st m ff it
 
-lensMap_ :: SimpleRefClass m => RefHandler m a -> Lens' a b -> RefHandler m b
-lensMap_ (RefHandler r) k = RefHandler $ r . k
+joinRef' st m ff (b, rep, _) = (,,) b rep $ \init -> do
+    r <- newReadReference st (const $ pure ()) $ \kill -> do
+        kill Kill
+        ref <- m st
+        noDependency st $ fmap fst $ getHandler st $ runRefReaderT' st (runRefHandler ref ff) >>= ($ init) . (^. _3)
+
+    tellHand st $ \msg -> r >>= ($ msg)
 
 
 instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
@@ -387,15 +383,13 @@ writeRef_ :: SimpleRefClass m => Bool -> GlobalVars m -> RefHandler m a -> Bool 
 writeRef_ rep st r init k = runRefReaderT' st (runRefHandler r $ \a -> RefFunctor ((), rep, k a)) >>= ($ init) . (^. _3)
 
 readRef__ :: SimpleRefClass m => GlobalVars m -> RefHandler m a -> m a
-readRef__ st r = runRefReaderT' st $ runRefHandler r (\a -> RefFunctor (a, error "impossible", error "impossible")) <&> (^. _1)
-
-readRef_ :: SimpleRefClass m => RefHandler m a -> RefReaderT m a
-readRef_ r = runRefHandler r (\a -> RefFunctor (a, error "impossible", error "impossible")) <&> (^. _1)
+readRef__ st r = runRefReaderT' st $ runRefHandler r (\a -> RefFunctor (a, False, error "impossible")) <&> (^. _1)
 
 runRefReaderT :: Monad m => RefReaderT m a -> RefCreatorT m a
 runRefReaderT (RefReaderTPure a) = return a
 runRefReaderT (RefReaderT x) = x
 
+{-# INLINE runRefReaderT' #-}
 runRefReaderT' st = flip unRefCreator st . runRefReaderT
 
 --tellHand :: (SimpleRefClass m) => Handler m -> m ()
