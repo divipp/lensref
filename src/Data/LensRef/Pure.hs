@@ -89,10 +89,8 @@ class (Functor (RefActionFunctor f), Functor (Base_ f)) => RefAction (f :: * -> 
         -> (Bool -> (a -> HandT_ f a) -> RefCreatorT_ f ())
         -> ((a -> a) -> RefWriterT_ f ())
         -> f ()
-    mapRefAction
-        :: RefReaderT_ f (f ())
-        -> ((f () -> RefCreatorT_ f ()) -> RefCreatorT_ f ())
-        -> f ()
+
+    joinRefAction :: RefReaderT_ f (f ()) -> f ()
 
 type RefReaderT_ f = RefReaderT (Base_ f)
 type RefWriterT_ f = RefWriterT (Base_ f)
@@ -147,7 +145,7 @@ instance (Monad m, Applicative m) => RefAction (ReaderAction b m) where
     type RefActionFunctor (ReaderAction b m) = Const b
     type Base_ (ReaderAction b m) = m
     buildRefAction f a _ _ = ReaderAction $ a <&> getConst . f
-    mapRefAction m _ = ReaderAction $ m >>= runReaderAction
+    joinRefAction m = ReaderAction $ m >>= runReaderAction
 
 -------------------- writer action
 
@@ -155,7 +153,7 @@ instance (Monad m, Applicative m) => RefAction (RefWriterT m) where
     type RefActionFunctor (RefWriterT m) = Identity
     type Base_ (RefWriterT m) = m
     buildRefAction f _ _ g = g $ runIdentity . f
-    mapRefAction m _ = join $ liftRefReader m
+    joinRefAction m = join $ liftRefReader m
 
 -------------------- register action
 
@@ -165,7 +163,15 @@ instance (Monad m, Applicative m) => RefAction (RegisterAction m) where
     type RefActionFunctor (RegisterAction m) = HandT m
     type Base_ (RegisterAction m) = m
     buildRefAction f _ g _ = RegisterAction $ \init -> g init f
-    mapRefAction _ f = RegisterAction $ \init -> f $ ($ init) . runRegisterAction
+    joinRefAction m = RegisterAction $ \init -> do
+        r <- newReference mempty
+        register r True $ \kill -> do
+            runHandler $ kill Kill
+            fmap fst . getHandler . ($ init) . runRegisterAction =<< liftRefReader' m
+        RefCreatorT $ tell $ \msg -> MonadMonoid $ do
+            h <- runRefWriterT $ liftRefReader $ readRefSimple r
+            runMonadMonoid $ h msg
+
          
 
 -------------------------------------
@@ -267,16 +273,8 @@ instance (Monad m, Applicative m) => RefClass (RefHandler m) where
 
     lensMap k (RefHandler r) = RefHandler $ r . k
 
-    joinRef mr = RefHandler $ \f -> mapRefAction (mr <&> \r -> runRefHandler r f) $ \write -> do
+    joinRef mr = RefHandler $ \f -> joinRefAction (mr <&> \r -> runRefHandler r f)
 
-        r <- newReference mempty
-        register r True $ \kill -> do
-            runHandler $ kill Kill
-            ref <- liftRefReader' mr
-            fmap fst $ getHandler $ write $ runRefHandler ref f
-        RefCreatorT $ tell $ \msg -> MonadMonoid $ do
-            h <- runRefWriterT $ liftRefReader $ readRefSimple r
-            runMonadMonoid $ h msg
 
 instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
 
