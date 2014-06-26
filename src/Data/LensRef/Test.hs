@@ -12,6 +12,7 @@ module Data.LensRef.Test
     , runPerformanceTestsPure
     ) where
 
+import Debug.Trace
 import Data.Maybe
 import Control.Applicative
 import Control.Monad
@@ -800,11 +801,12 @@ tests runRefCreatorT = do
 
     runTest "issue1" $ do
         r <- newRef (0 :: Int)
-        le <- onChangeEq_ (fmap (min 1) $ readRef r) $ \b -> case b of
-            0 -> return $ pure 0
-            1 -> onChangeEq_ (readRef r) return <&> readRef
+        le <- onChangeEq (fmap (min 1) $ readRef r) $ \b -> do
+            case b of
+                0 -> return $ pure 0
+                1 -> onChange (readRef r) return
 
-        _ <- onChange (liftM2 (,) (readRef r) (join $ readRef le)) $ message . show
+        _ <- onChange (liftM2 (,) (readRef r) (join le)) $ message . show
 
         return $ do
             message' "(0,0)"

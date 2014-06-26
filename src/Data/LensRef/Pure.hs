@@ -247,14 +247,14 @@ instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
 
     onChangeEq_ m f = do
         r <- newReference (const False, (mempty, error "impossible #3"))
-        register r True $ \it@(p, (h', _)) -> do
+        register r True $ \it@(p, (h, _)) -> do
             a <- liftRefReader' m
             if p a
               then return it
               else do
-                runHandler $ h' Kill
-                (h, b) <- getHandler $ f a
-                return ((== a), (h, b))
+                runHandler $ h Kill
+                hb <- getHandler $ f a
+                return ((== a), hb)
         RefCreatorT $ tell $ \msg -> MonadMonoid $ do
             (_, (h, _)) <- runRefWriterT $ liftRefReader $ readRef_ r
             runMonadMonoid $ h msg
@@ -374,7 +374,7 @@ topSortComponent
     :: (Int -> [Int])   -- ^ children
     -> Int              -- ^ starting point
     -> Maybe [Int]
-topSortComponent ch a = topSort (walk a) [a]
+topSortComponent ch a = topSort (execState (collects a) mempty) [a]
   where
     topSort par []
         | Map.null par = Just []
@@ -384,8 +384,6 @@ topSortComponent ch a = topSort (walk a) [a]
         xs = ch p
         par' = foldr (Map.adjust $ filter (/= p)) (Map.delete p par) xs
         ys = filter (null . (par' Map.!)) xs
-
-    walk v = execState (collects v) $ Map.singleton v []
 
     collects v = mapM_ (collect v) $ ch v
     collect p v = do
