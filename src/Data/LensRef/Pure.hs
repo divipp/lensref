@@ -70,19 +70,20 @@ data UpdateFunState m = UpdateFunState
     , _updateFun :: RefWriterT m ()    -- what to run if at least one of the dependency changes
     }
 
-data RefHandler m a = RefHandler
-    { runRefHandler
-        :: forall b
-        .  (a -> RefFunctor m b a)
-        -> RefReaderT m (b, Bool, Bool -> RefCreatorT m ()) -- True: run the trigger initially also
-    }
+newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ m a }
 
-newtype RefFunctor m b a = RefFunctor { runRefFunctor :: (b, Bool, HandT m a) }
+type RefHandler_ m a =
+        forall f
+        .  (RefAction f, Functor (RefActionFunctor f m))
+        => (a -> RefActionFunctor f m a)
+        -> f m ()
 
-instance Functor m => Functor (RefFunctor m b) where
-    fmap f (RefFunctor (b, rep, m)) = RefFunctor (b, rep, fmap f m)
+class RefAction (f :: (* -> *) -> * -> *) where
+    type RefActionFunctor f (m :: * -> *) :: * -> *
+    buildRefAction :: Monad m => (a -> RefActionFunctor f m a) -> RefReaderT m a -> (Bool -> Bool -> (a -> HandT m a) -> RefCreatorT m ()) -> f m ()
+    mapRefAction :: (Monad m, Applicative m) => RefReaderT m (f m ()) -> ((f m () -> RefCreatorT m ()) -> RefCreatorT m ()) -> f m ()
 
-----------
+-----------------------------------------------
 
 -- Handlers are added on trigger registration.
 -- The registered triggers may be killed, blocked and unblocked via the handler.
@@ -95,7 +96,8 @@ newtype RefReaderT (m :: * -> *) a
         deriving (Monad, Applicative, Functor, MonadReader ValSt)
 
 -- invariant property: the values in St state are not changed, the state may be extended
-type HandT m = StateT (St m) (WriterT (Ids m) m)
+newtype HandT m a = HandT { runHandT :: StateT (St m) (WriterT (Ids m) m) a }
+        deriving (Monad, Applicative, Functor) --, MonadReader ValSt)
 
 newtype instance RefWriterOf_ (RefReaderT m) a
     = RefWriterT { runRefWriterT :: StateT (St m) m a }
@@ -108,6 +110,32 @@ type RefWriterT m = RefWriterOf_ (RefReaderT m)
 newtype RefCreatorT m a
     = RefCreatorT { unRefCreator :: WriterT (Handler m) (StateT (St m) m) a }
         deriving (Monad, Applicative, Functor, MonadFix)
+
+-------------------- reader action
+
+newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReaderT m b }
+
+instance RefAction (ReaderAction b) where
+    type RefActionFunctor (ReaderAction b) m = Const b
+    buildRefAction f a _ = ReaderAction $ a <&> getConst . f
+    mapRefAction m _ = ReaderAction $ m >>= runReaderAction
+
+-------------------- writer action
+
+instance RefAction RefCreatorT where
+    type RefActionFunctor RefCreatorT m = Identity
+    buildRefAction f _ g = g True False $ return . runIdentity . f
+    mapRefAction m _ = liftRefReader m >>= id
+
+-------------------- register action
+
+newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCreatorT m a }
+
+instance RefAction RegisterAction where
+    type RefActionFunctor RegisterAction m = HandT m
+    buildRefAction f _ g = RegisterAction $ \init -> g init True f
+    mapRefAction _ f = RegisterAction $ \init -> f $ ($ init) . runRegisterAction
+         
 
 -------------------------------------
 
@@ -122,17 +150,14 @@ newReference a = RefCreatorT $ do
 
     setVal a
 
-    pure $ RefHandler $ \ff -> RefReaderT $ do
+    let am = RefReaderT $ do
+            lift . tell $ Set.singleton ir
+            getVal
 
-        lift . tell $ Set.singleton ir
-        aold <- getVal
+    pure $ RefHandler $ \ff -> buildRefAction ff am $ \init rep upd -> RefCreatorT $ do
 
-        return $ case runRefFunctor $ ff aold of
-          (b, rep, _) -> (,,) b rep $ \init -> RefCreatorT $ do
-
-            let upd = (^. _3) . runRefFunctor . ff
             let gv = mapStateT (fmap (\((a,st),ids) -> ((a,ids),st)) . runWriterT)
-                        $ liftRefReader' (RefReaderT getVal) >>= upd
+                        $ runHandT $ liftRefReader' (RefReaderT getVal) >>= upd
 
             (a, ih) <- lift gv
 
@@ -198,31 +223,25 @@ newReference a = RefCreatorT $ do
 instance (Monad m, Applicative m) => RefClass (RefHandler m) where
     type RefReaderSimple (RefHandler m) = RefReaderT m
 
-    unitRef = RefHandler $ \x -> pure $ case runRefFunctor $ x () of
-        (b, rep, _) -> (,,) b rep $ const $ pure ()
+    unitRef = RefHandler $ \f -> buildRefAction f (pure ()) $ \_ _ _ -> pure ()
 
-    readRefSimple = readRef_
+    readRefSimple r = runReaderAction $ runRefHandler r Const
 
-    writeRefSimple r a = writeRef_ r a
+    writeRefSimple r a = 
+        RefWriterT . fmap fst . runWriterT . unRefCreator $ runRefHandler r (const $ Identity a)
 
     lensMap k (RefHandler r) = RefHandler $ r . k
 
-    joinRef mr = RefHandler $ \ff -> do
+    joinRef mr = RefHandler $ \f -> mapRefAction (mr <&> \r -> runRefHandler r f) $ \write -> do
 
-        ref0 <- mr
-        runRefHandler ref0 ff <&> \(b, rep, cr) -> (,,) b rep $ \init -> case rep of
-          False -> cr init
-          True -> do
-
-            r <- newReference mempty
-            register r True $ \kill -> do
-                runHandler $ kill Kill
-                ref <- liftRefReader' mr
-                fmap fst $ getHandler $ liftRefReader (runRefHandler ref ff) >>= ($ init) . (^. _3)
-            RefCreatorT $ tell $ \msg -> MonadMonoid $ do
-                h <- runRefWriterT $ liftRefReader $ readRef_ r
-                runMonadMonoid $ h msg
-
+        r <- newReference mempty
+        register r True $ \kill -> do
+            runHandler $ kill Kill
+            ref <- liftRefReader' mr
+            fmap fst $ getHandler $ write $ runRefHandler ref f
+        RefCreatorT $ tell $ \msg -> MonadMonoid $ do
+            h <- runRefWriterT $ liftRefReader $ readRefSimple r
+            runMonadMonoid $ h msg
 
 instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
 
@@ -231,7 +250,7 @@ instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
     extendRef m k a0 = do
         r <- newReference a0
         -- TODO: remove dropHandler?
-        dropHandler $ register m False $ \_ -> liftRefReader' $ fmap (^. k) $ readRef_ r
+        dropHandler $ register m False $ \_ -> liftRefReader' $ fmap (^. k) $ readRefSimple r
         dropHandler $ register r True $ \a -> liftRefReader' $ fmap (\b -> set k b a) $ readRefSimple m
         return r
 
@@ -241,7 +260,7 @@ instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
             runHandler $ h Kill
             liftRefReader' m >>= getHandler . f
         RefCreatorT $ tell $ \msg -> MonadMonoid $ do
-            (h, _) <- runRefWriterT $ liftRefReader $ readRef_ r
+            (h, _) <- runRefWriterT $ liftRefReader $ readRefSimple r
             runMonadMonoid $ h msg
         return $ fmap snd $ readRef r
 
@@ -256,7 +275,7 @@ instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
                 hb <- getHandler $ f a
                 return ((== a), hb)
         RefCreatorT $ tell $ \msg -> MonadMonoid $ do
-            (_, (h, _)) <- runRefWriterT $ liftRefReader $ readRef_ r
+            (_, (h, _)) <- runRefWriterT $ liftRefReader $ readRefSimple r
             runMonadMonoid $ h msg
         return $ lensMap (_2 . _2) r
 
@@ -264,9 +283,9 @@ instance (SimpleRefClass m) => MonadRefCreator (RefCreatorT m) where
         r <- newReference ((const False, ((error "impossible #2", mempty, mempty) , error "impossible #1")), [])
         register r True upd
         RefCreatorT $ tell $ \msg -> MonadMonoid $ do
-            ((_, ((_, h1, h2), _)), _) <- runRefWriterT $ liftRefReader $ readRef_ r
+            ((_, ((_, h1, h2), _)), _) <- runRefWriterT $ liftRefReader $ readRefSimple r
             runMonadMonoid $ h1 msg >> h2 msg
-        return $ fmap (snd . snd . fst) $ readRef_ r
+        return $ fmap (snd . snd . fst) $ readRefSimple r
       where
         upd st@((p, ((m'',h1'',h2''), _)), memo) = do
             let it = (p, (m'', h1''))
@@ -299,29 +318,22 @@ runRefCreatorT f = do
 
 ----------------------------------- aux
 
-readRef_ :: (Monad m, Applicative m) => RefHandler m a -> RefReaderT m a
-readRef_ r = runRefHandler r (\a -> RefFunctor (a, error "impossible #10", error "impossible #11")) <&> (^. _1)
-
-writeRef_ :: (Monad m, Applicative m) => RefHandler m a -> a -> RefWriterT m ()
-writeRef_ r a = liftRefReader (runRefHandler r $ \_ -> RefFunctor ((), False, pure a))
-    >>= RefWriterT . fmap fst . runWriterT . unRefCreator . ($ True) . (^. _3)
-
 register
     :: (Monad m, Applicative m)
     => RefHandler m a
     -> Bool                 -- True: run the following function initially
     -> (a -> HandT m a)     -- trigger to be registered
     -> RefCreatorT m ()     -- emits a handler
-register r init k = liftRefReader (runRefHandler r $ \a -> RefFunctor ((), True, k a)) >>= ($ init) . (^. _3)
+register r init k = runRegisterAction (runRefHandler r k) init
 
 liftRefReader' :: (Monad m, Applicative m) => RefReaderT m a -> HandT m a
-liftRefReader' = readerToState (^. _1) . mapReaderT (mapWriterT $ return . runIdentity) . runRefReaderT
+liftRefReader' = HandT . readerToState (^. _1) . mapReaderT (mapWriterT $ return . runIdentity) . runRefReaderT
 
 dropHandler :: (Monad m, Applicative m) => RefCreatorT m a -> RefCreatorT m a
 dropHandler = mapRefCreator $ lift . fmap fst . runWriterT
 
 getHandler :: (Monad m, Applicative m) => RefCreatorT m a -> HandT m (Handler m, a)
-getHandler = mapStateT (lift . fmap (\((a,h),st)->((h,a),st))) . runWriterT . unRefCreator
+getHandler = HandT . mapStateT (lift . fmap (\((a,h),st)->((h,a),st))) . runWriterT . unRefCreator
 
 mapRefCreator f = RefCreatorT . f . unRefCreator
 
@@ -329,7 +341,7 @@ unsafeGet :: Dyn -> a
 unsafeGet (Dyn a) = unsafeCoerce a
 
 runHandler :: (Monad m, Applicative m) => MonadMonoid (StateT (St m) m) () -> HandT m ()
-runHandler = mapStateT lift . runMonadMonoid
+runHandler = HandT . mapStateT lift . runMonadMonoid
 
 ----------------------------------------- lenses
 
