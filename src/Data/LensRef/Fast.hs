@@ -27,7 +27,7 @@ import Data.Monoid
 import qualified Data.IntMap.Strict as Map
 import Control.Applicative
 import Control.Monad.State.Strict
---import Control.Monad.Identity
+import Control.Monad.Identity
 import Control.Lens.Simple
 
 import Unsafe.Coerce
@@ -54,14 +54,66 @@ data TriggerState m = TriggerState
     }
 
 -- | reference handler
-newtype RefHandler m a = RefHandler
-    { runRefHandler
-        :: forall b
-        .  (a -> RefFunctor m b a)
-        -> BaseR m b
-    }
+newtype RefHandler m a = RefHandler { runRefHandler :: RefHandler_ m a }
 
-type BaseR m b = RefReaderT m (b, Bool, Bool -> m ()) -- True: run the trigger initially also
+type RefHandler_ m a =
+        forall f
+        .  (RefAction f, Base_ f ~ m)
+        => (a -> RefActionFunctor f a)
+        -> f ()
+
+class (Functor (RefActionFunctor f), Functor (Base_ f)) => RefAction (f :: * -> *) where
+
+    type RefActionFunctor f :: * -> *
+    type Base_ f :: * -> *
+
+    buildRefAction
+        :: (a -> RefActionFunctor f a)
+        -> RefReaderT_ f a
+        -> (Bool -> (a -> HandT_ f a) -> RefCreatorT_ f ())
+        -> ((a -> a) -> RefWriterT_ f ())
+        -> f ()
+    mapRefAction
+        :: RefReaderT_ f (f ())
+        -> ((f () -> RefCreatorT_ f ()) -> RefCreatorT_ f ())
+        -> f ()
+
+type RefReaderT_ f = RefReaderT (Base_ f)
+type RefWriterT_ f = RefWriterT (Base_ f)
+type RefCreatorT_ f = RefCreatorT (Base_ f)
+type HandT_ f = HandT (Base_ f)
+
+type HandT (m :: * -> *) = m
+
+-------------------- reader action
+
+newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReaderT m b }
+
+instance SimpleRefClass m => RefAction (ReaderAction b m) where
+    type RefActionFunctor (ReaderAction b m) = Const b
+    type Base_ (ReaderAction b m) = m
+    buildRefAction f a _ _ = ReaderAction $ a <&> getConst . f
+    mapRefAction m _ = ReaderAction $ m >>= runReaderAction
+
+-------------------- writer action
+
+instance SimpleRefClass m => RefAction (RefWriterT m) where
+    type RefActionFunctor (RefWriterT m) = Identity
+    type Base_ (RefWriterT m) = m
+    buildRefAction f _ _ g = g $ runIdentity . f
+    mapRefAction m _ = join $ liftRefReader m
+
+-------------------- register action
+
+newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCreatorT m a }
+
+instance SimpleRefClass m => RefAction (RegisterAction m) where
+    type RefActionFunctor (RegisterAction m) = HandT m
+    type Base_ (RegisterAction m) = m
+    buildRefAction f _ g _ = RegisterAction $ \init -> g init f
+    mapRefAction _ f = RegisterAction $ \init -> f $ ($ init) . runRegisterAction
+
+
 
 newtype RefFunctor m b a = RefFunctor { runRefFunctor :: (b, Bool, m a) }
 
@@ -148,16 +200,23 @@ newReference st a0 = do
     i <- newId st
     oir <- newSimpleRef $ RefState a0 mempty
 
-    return $ RefHandler $ \ff -> RefReaderT $ RefCreatorT $ \st -> do
+    let getVal :: m a
+        getVal = do
+            RefState a _ <- readSimpleRef oir
+            return $ unsafeCoerce a
 
-        RefState a' nas <- readSimpleRef oir
-        let aold = unsafeCoerce a'
-        dp <- readSimpleRef (_dependencycoll st)
-        writeSimpleRef (_dependencycoll st) $ Map.insert i oir dp
+        am :: RefReaderT m a
+        am = RefReaderT $ RefCreatorT $ \st -> do
+            dp <- readSimpleRef (_dependencycoll st)
+            writeSimpleRef (_dependencycoll st) $ Map.insert i oir dp
+            getVal
 
-        return $ case runRefFunctor $ ff aold of
-          (b, rep, _) -> (,,) b rep $ \init -> do
-            let ma = (^. _3) . runRefFunctor . ff
+    let wr rep init upd = RefCreatorT $ \st -> do
+
+            RefState aold_ nas <- readSimpleRef oir
+            let aold = unsafeCoerce aold_ :: a
+
+            let ma = upd
 
             (ih, a) <- getDependency st $ ma aold
 
@@ -207,6 +266,11 @@ newReference st a0 = do
 
             when (rep && not (Map.null ih)) $ regTrigger st (i, oir) ih ma
 
+    pure $ RefHandler $ \ff ->
+        buildRefAction ff am
+            (wr True)
+            (RefWriterT . wr False True . (return .))
+
 
 regTrigger :: forall m a . SimpleRefClass m => GlobalVars m -> Id m -> Ids m -> (a -> m a) -> m ()
 regTrigger st (i, oir) ih ma = do
@@ -249,36 +313,29 @@ regTrigger st (i, oir) ih ma = do
         when (msg == Unblock) $
             modSimpleRef (_postpone st) $ modify (>> _updateFun ts)
 
+readRef__ :: SimpleRefClass m => GlobalVars m -> RefHandler m a -> m a
+readRef__ st r = runRefReaderT' st $ runReaderAction $ runRefHandler r Const
 
 instance SimpleRefClass m => RefClass (RefHandler m) where
     {-# SPECIALIZE instance RefClass (RefHandler IO) #-}
     type RefReaderSimple (RefHandler m) = RefReaderT m
 
-    unitRef = RefHandler $ \x -> pure $ case runRefFunctor $ x () of
-        (b, rep, _) -> (b, rep, const $ pure ())
+    unitRef = RefHandler $ \f -> buildRefAction f (pure ()) (\_ _ -> pure ()) (\_ -> pure ())
 
-    readRefSimple r = runRefHandler r (\a -> RefFunctor (a, False, error "impossible")) <&> (^. _1)
+    readRefSimple r = runReaderAction $ runRefHandler r Const
 
-    writeRefSimple r a = RefWriterT $ RefCreatorT $ \st ->
-        writeRef_ False st r True $ \_ -> pure a
+    writeRefSimple r = runRefHandler r . const . Identity
 
     lensMap k (RefHandler r) = RefHandler $ r . k
 
     joinRef (RefReaderTPure r) = r
-    joinRef (RefReaderT (RefCreatorT m)) = RefHandler $ \ff -> RefReaderT $ RefCreatorT $ \st -> do
-        ref0 <- m st
-        runRefReaderT' st $ runRefHandler ref0 ff <&> \it@(_, rep, _) -> case rep of 
-          False -> it
-          True -> joinRef' st m ff it
+    joinRef mr = RefHandler $ \f -> mapRefAction (mr <&> \r -> runRefHandler r f) $ \write -> RefCreatorT $ \st -> do
 
-joinRef' st m ff (b, rep, _) = (,,) b rep $ \init -> do
-    r <- newReadReference st (const $ pure ()) $ \kill -> do
-        kill Kill
-        ref <- m st
-        noDependency st $ fmap fst $ getHandler st $ runRefReaderT' st (runRefHandler ref ff) >>= ($ init) . (^. _3)
-
-    tellHand st $ \msg -> r >>= ($ msg)
-
+        r <- newReadReference st (const $ pure ()) $ \kill -> do
+            kill Kill
+            ref <- runRefReaderT' st mr
+            noDependency st $ fmap fst $ getHandler st $ flip unRefCreator st $ write $ runRefHandler ref f
+        tellHand st $ \msg -> r >>= ($ msg)
 
 instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
     {-# SPECIALIZE instance MonadRefCreator (RefCreatorT IO) #-}
@@ -289,8 +346,8 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
         r <- newReference st a0
         -- TODO: remove getHandler?
         _ <- getHandler st $ do
-            writeRef_ True st r True $ \a -> runRefReaderT' st $ readRefSimple m <&> \b -> set k b a
-            writeRef_ True st m False $ \_ -> readRef__ st r <&> (^. k)
+            register st r True $ \a -> runRefReaderT' st $ readRefSimple m <&> \b -> set k b a
+            register st m False $ \_ -> readRef__ st r <&> (^. k)
         return r
 
     onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
@@ -323,7 +380,7 @@ instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
 
     onChangeEq_ m f = RefCreatorT $ \st -> do
         r <- newReference st (const False, (const $ pure (), error "impossible #3"))
-        writeRef_ True st r True $ \it@(p, (h', _)) -> do
+        register st r True $ \it@(p, (h', _)) -> do
             a <- runRefReaderT' st m
             noDependency st $ if p a
               then return it
@@ -379,11 +436,8 @@ runRefCreatorT f = do
 
 -------------------- aux
 
-writeRef_ :: SimpleRefClass m => Bool -> GlobalVars m -> RefHandler m a -> Bool -> (a -> m a) -> m ()
-writeRef_ rep st r init k = runRefReaderT' st (runRefHandler r $ \a -> RefFunctor ((), rep, k a)) >>= ($ init) . (^. _3)
-
-readRef__ :: SimpleRefClass m => GlobalVars m -> RefHandler m a -> m a
-readRef__ st r = runRefReaderT' st $ runRefHandler r (\a -> RefFunctor (a, False, error "impossible")) <&> (^. _1)
+register :: SimpleRefClass m => GlobalVars m -> RefHandler m a -> Bool -> (a -> HandT m a) -> m ()
+register st r init k = flip unRefCreator st $ runRegisterAction (runRefHandler r k) init
 
 runRefReaderT :: Monad m => RefReaderT m a -> RefCreatorT m a
 runRefReaderT (RefReaderTPure a) = return a
