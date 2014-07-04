@@ -21,16 +21,16 @@ myConfig = defaultConfig
             }
 
 main = defaultMainWith myConfig (return ())
-     $  [ bench ("ioref " ++ show i) $ ioRefTest i | i <- map (* 10) range]
+     $  [ bench ("ioref create" ++ show i) $ ioRefTest i | i <- range]
      ++
         [ bench (imp ++ " " ++ name ++ " " ++ show i) $ f name i
-        | (imp, f, corr) <- [("fast", runPerformanceTests, 1), ("pure", runPerformanceTestsPure, 10)]
-        , (name, corr2) <- [("create", 1), ("mapchain", 1), ("joinchain", 2)]
+        | (imp, f, corr) <- [("lensref", runPerformanceTests, 1)]
+        , (name, corr2) <- [("create", 0.1), ("mapchain", 0.5), ("joinchain", 0.02)]
         , n <- range
-        , let i = n `div` (corr * corr2)
+        , let i = round $ fromIntegral n * corr * corr2
         ]
   where
-    range = [2000,4000,6000]
+    range = [20000,40000,60000]
 
 -- for comparison
 ioRefTest n = do

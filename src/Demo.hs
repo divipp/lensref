@@ -2,11 +2,10 @@ module Demo where
 
 import Data.Function
 import Control.Monad
+import Control.Monad.Trans
 import Control.Concurrent
 
-import Data.LensRef.Class
-import Data.LensRef.Fast
---import Data.LensRef.Pure
+import Data.LensRef
 
 main :: IO ()
 main = do
@@ -16,9 +15,9 @@ main = do
         a <- newRef False
         b <- newRef False
 
-        _ <- onChangeEq (liftM2 (,) (readRef a) (readRef b)) $ liftEffectM . print
+        _ <- onChangeEq (liftM2 (,) (readRef a) (readRef b)) $ lift . print
 
-        liftEffectM $ void $ forkIO $ fix $ \cycle -> do
+        lift $ void $ forkIO $ fix $ \cycle -> do
             l <- getLine
             case l of
                 "" -> putMVar exit ()

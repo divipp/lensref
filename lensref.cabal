@@ -37,6 +37,10 @@ Flag tests
   Description:      Build the tests
   Default:          False
 
+Flag pure
+  Description:      Use the pure but slow implementation of lens references
+  Default:          False
+
 library
 
   hs-source-dirs:
@@ -48,12 +52,12 @@ library
                   , monad-control < 0.4
                   , containers < 0.6
   exposed-modules:
-                    Data.LensRef.Class
                     Data.LensRef.Common
                     Data.LensRef.Pure
                     Data.LensRef.Fast
                     Data.LensRef
                     Demo
+                    Demo2
   other-modules:
                     Control.Lens.Simple
   if flag(tests)
@@ -63,6 +67,10 @@ library
     exposed-modules:
 --                    Data.LensRef.Arbitrary
                     Data.LensRef.Test
+
+  if flag(pure)
+    cpp-options:
+                    -D__PURE__
 
   ghc-options: 
                     -Wall 
