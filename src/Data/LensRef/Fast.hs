@@ -41,10 +41,8 @@ module Data.LensRef.Fast
     , onChangeMemo
     ) where
 
---import Debug.Trace
 import Data.Maybe
 import Data.Monoid
---import Data.IORef
 import qualified Data.IntMap.Strict as Map
 import Control.Applicative
 import Control.Monad.State.Strict
@@ -53,14 +51,13 @@ import Control.Lens.Simple
 
 import Unsafe.Coerce
 
---import Data.LensRef.Class
 import Data.LensRef.Common
 
 ----------------------------------- data types
 
 -- | reference temporal state
 data RefState m where
-    RefState 
+    RefState
         :: a        -- reference value
         -> TIds m   -- registered triggers (run them if the value changes)
         -> RefState m
@@ -593,7 +590,7 @@ r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
 --onChangeEq r f = fmap readRef $ onChangeEq_ r f
 
 
-memoRead :: SimpleRefClass m => RefCreatorT m a -> RefCreatorT m (RefCreatorT m a) 
+memoRead :: SimpleRefClass m => RefCreatorT m a -> RefCreatorT m (RefCreatorT m a)
 memoRead g = do
     s <- newRef Nothing
     pure $ readerToCreator (readRef s) >>= \x -> case x of
@@ -601,6 +598,5 @@ memoRead g = do
         _ -> g >>= \a -> do
             wr $ writeRef s $ Just a
             pure a
-
 
 

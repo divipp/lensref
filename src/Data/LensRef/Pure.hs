@@ -41,18 +41,14 @@ module Data.LensRef.Pure
     , onChangeMemo
     ) where
 
--- import Data.Monoid
 import Data.Maybe
---import Data.List
 import qualified Data.IntSet as Set
 import qualified Data.IntMap as Map
 import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.State.Strict
---import qualified Control.Monad.State.Strict
 import Control.Monad.Writer
 import Control.Monad.Identity
---import Control.Monad.Trans.Control
 import Control.Lens.Simple
 
 --import Debug.Trace
@@ -91,7 +87,6 @@ data UpdateFunState m = UpdateFunState
     , _updateFun :: RefWriterT m ()    -- what to run if at least one of the dependency changes
     }
 
-
 -----------------------------------------------
 
 -- Handlers are added on trigger registration.
@@ -113,7 +108,7 @@ newtype RefWriterT m a
         deriving (Monad, Applicative, Functor, MonadState (St m))
 
 -- collecting handlers
--- invariant property: the St state is only exteded, not changed
+-- invariant property: the St state is only extended, not changed
 newtype RefCreatorT m a
     = RefCreatorT { unRefCreator :: WriterT (Handler m) (StateT (St m) m) a }
         deriving (Monad, Applicative, Functor, MonadFix)
@@ -393,7 +388,6 @@ allUnique = and . flip evalState mempty . mapM f where
 readerToState :: (Monad m, Applicative m) => (s -> r) -> ReaderT r m a -> StateT s m a
 readerToState g (ReaderT f) = StateT $ \s -> fmap (flip (,) s) $ f $ g s
 
-
 ------------------------
 
 
@@ -494,7 +488,7 @@ onChangeEq r f = fmap readRef $ onChangeEq_ r f
 
 
 
-memoRead :: (Monad m, Applicative m) => RefCreatorT m a -> RefCreatorT m (RefCreatorT m a) 
+memoRead :: (Monad m, Applicative m) => RefCreatorT m a -> RefCreatorT m (RefCreatorT m a)
 memoRead g = do
     s <- newRef Nothing
     pure $ readerToCreator (readRef s) >>= \x -> case x of
@@ -502,6 +496,4 @@ memoRead g = do
         _ -> g >>= \a -> do
             wr $ writeRef s $ Just a
             pure a
-
-
 

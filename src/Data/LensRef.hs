@@ -13,4 +13,3 @@ import Data.LensRef.Pure as Ref
 import Data.LensRef.Fast as Ref
 #endif
 
-

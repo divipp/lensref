@@ -145,7 +145,7 @@ dyn v = do
     mk (Node Horiz l) = mapM mk l <&> foldr horiz emptyDoc
     mk (Node Vert l) = mapM mk l <&> foldr vert emptyDoc
     mk (Dyn m) = m >>= mk --return ["*"]
-
+    mk (Keret l) = mk l <&> keret
 
 ctrl :: [Action] -> RefCreator ControlId
 ctrl c = do
@@ -403,6 +403,7 @@ intListEditor def maxi list_ range = do
     (f *** g) (a, b) = (f a, g b)
 
 listEditor ::  a -> [Ref a -> Widget] -> Ref [a] -> Widget
+listEditor _ [] _ = error "not enought editors for listEditor"
 listEditor def (ed: eds) r = do
     q <- extendRef r listLens (False, (def, []))
     cell (fmap fst $ readRef q) $ \b -> case b of

@@ -17,17 +17,17 @@ import Control.Monad.State
 type Lens s t a b = forall f. Functor f => (a -> f b) -> s -> f t
 type Lens' s a = Lens s s a a
 
-type LensLike f s t a b = (a -> f b) -> s -> f t 
-type LensLike' f s a = LensLike f s s a a 
+type LensLike f s t a b = (a -> f b) -> s -> f t
+type LensLike' f s a = LensLike f s s a a
 
-type Traversal s t a b = forall f. Applicative f => (a -> f b) -> s -> f t 
+type Traversal s t a b = forall f. Applicative f => (a -> f b) -> s -> f t
 type Traversal' s a = Traversal s s a a
 
-type Getting r s a = (a -> Const r a) -> s -> Const r s 
+type Getting r s a = (a -> Const r a) -> s -> Const r s
 
-type Setting p s t a b = p a (Identity b) -> s -> Identity t 
+type Setting p s t a b = p a (Identity b) -> s -> Identity t
 
-type ASetter s t a b = (a -> Identity b) -> s -> Identity t 
+type ASetter s t a b = (a -> Identity b) -> s -> Identity t
 
 ------------ setter
 
@@ -54,7 +54,7 @@ to f g s = Const $ getConst $ g $ f s
 infixl 8 ^.
 
 {-# INLINE (^.) #-}
-(^.) :: s -> Getting a s a -> a 
+(^.) :: s -> Getting a s a -> a
 a ^. l = getConst $ l Const a
 
 ------------- lens
@@ -98,7 +98,7 @@ magnify l (ReaderT f) = ReaderT $ \a -> f $ a ^. l
 --instance Zoom m n s t => Zoom (ReaderT e m) (ReaderT e n) s t where
 
 {-# INLINE view #-}
-view :: MonadReader s m => Getting a s a -> m a 
+view :: MonadReader s m => Getting a s a -> m a
 view l = asks (^. l)
 
 ----------------------

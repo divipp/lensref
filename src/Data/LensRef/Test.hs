@@ -10,7 +10,6 @@ module Data.LensRef.Test
     , runPerformanceTests
     ) where
 
---import Debug.Trace
 import Data.Maybe
 import Control.Applicative
 import Control.Monad
@@ -141,7 +140,6 @@ runTests = do
         let r = joinRef $ readRef rr
         q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
-  --          q2 = _2 `lensMap` q
         return $ do
             q ==> (False, 0)
             writeRef r1 $ Just 4
@@ -206,7 +204,6 @@ runTests = do
                 pure $ if b then r1 else r2
         q <- extendRef r maybeLens (False, 0)
         let q1 = _1 `lensMap` q
-    --        q2 = _2 `lensMap` q
         return $ do
             q ==> (False, 0)
             writeRef r1 $ Just 4
@@ -558,6 +555,7 @@ runTests = do
             1 -> do
                 showStatus "#1"
                 return $ return ()
+            _ -> error $ "Unexpected value for r in kill & block: " ++ show i
 
         return $ do
             send r 0
@@ -884,6 +882,7 @@ runPerformanceTests name n = do
                 r1' ==> 'x'
                 r2' ==> 'y'
 
+        _ -> error $ "No such test: " ++ name
 
 -------------------------- auxiliary definitions
 
@@ -916,11 +915,3 @@ undoLens eq = lens get set where
     set (x' : xs, ys) x | eq x x' = (x: xs, ys)
     set (xs, _) x = (x : xs, [])
 
-{-
-listLens :: Lens' (Bool, (a, [a])) [a]
-listLens = lens get set where
-    get (False, _) = []
-    get (True, (l, r)) = l: r
-    set (_, x) [] = (False, x)
-    set _ (l: r) = (True, (l, r))
--}

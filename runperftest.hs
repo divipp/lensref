@@ -4,7 +4,6 @@
 main :: IO ()
 main = fail "enable the tests flag"
 #else
-import Numeric
 import Data.IORef
 import Control.Monad
 import Criterion.Main
@@ -44,4 +43,3 @@ ioRefTest n = do
     a ==? b | a == b = return ()
     a ==? b = fail $ show a ++ " /= " ++ show b
 #endif
-

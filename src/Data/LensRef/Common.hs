@@ -116,4 +116,3 @@ instance (Monad m, Functor m) => SimpleRefClass (SimpleRefT m) where
 runSimpleRefT :: Monad m => SimpleRefT m a -> m a
 runSimpleRefT = flip evalStateT mempty
 
-
