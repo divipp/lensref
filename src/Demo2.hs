@@ -13,20 +13,14 @@ import Data.Traversable hiding (mapM)
 import qualified Data.IntMap as Map
 import Control.Applicative
 import Control.Monad
---import Control.Monad.Identity
 import Control.Monad.State
---import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Lens.Simple
---import System.Posix.IO
---import System.Posix.Types (Fd)
 
---import Data.LensRef
 import Data.LensRef.Common
---import Data.LensRef.Fast
-import qualified Data.LensRef.Fast as Ref
-import Data.LensRef.Fast hiding (readRef, writeRef, lensMap, modRef, joinRef, Ref)
+import qualified Data.LensRef as Ref
+import Data.LensRef hiding (readRef, writeRef, lensMap, modRef, joinRef, Ref)
 
 class RefClass r where
     readRef :: r a -> RefReader a
