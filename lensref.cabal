@@ -52,14 +52,14 @@ library
                   , monad-control < 0.4
                   , containers < 0.6
   exposed-modules:
-                    Data.LensRef.Common
-                    Data.LensRef.Pure
-                    Data.LensRef.Fast
                     Data.LensRef
                     Demo
                     Demo2
   other-modules:
                     Control.Lens.Simple
+                    Data.LensRef.Common
+                    Data.LensRef.Pure
+                    Data.LensRef.Fast
   if flag(tests)
     build-depends:
 --                    operational < 0.3

@@ -14,13 +14,15 @@ The implementation uses @unsafeCoerce@ internally, but its effect cannot escape.
 
 
 module Data.LensRef.Pure
-    ( RefReaderT            -- RefReader
+    ( -- * Monads
+      RefReaderT            -- RefReader
     , RefCreatorT           -- RefCreator
     , RefWriterT            -- RefWriter
-    , currentValue
     , readerToWriter
     , readerToCreator
     , runRefCreatorT        -- runRefCreator
+
+    -- * References
     , Ref
     , readRef
     , writeRef
@@ -29,8 +31,6 @@ module Data.LensRef.Pure
     , lensMap
     , unitRef
     , newRef
-    , RegionStatusChange (..)
-    , onRegionStatusChange
 
     -- * composed with register
     , memoRead
@@ -39,6 +39,11 @@ module Data.LensRef.Pure
     , onChangeEq
     , onChangeEq_
     , onChangeMemo
+
+    -- * Other
+    , currentValue
+    , RegionStatusChange (..)
+    , onRegionStatusChange
     ) where
 
 import Data.Maybe
