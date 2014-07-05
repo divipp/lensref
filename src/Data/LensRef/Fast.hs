@@ -14,13 +14,13 @@ TODO
 - optimiziation: equality check
 -}
 module Data.LensRef.Fast
-    ( RefReaderT
-    , RefCreatorT
-    , RefWriterT
+    ( RefReader
+    , RefCreator
+    , RefWriter
     , currentValue
     , readerToWriter
     , readerToCreator
-    , runRefCreatorT
+    , runRefCreator
     , Ref
     , readRef
     , writeRef
@@ -101,17 +101,17 @@ type OrdRefSet m a = Map.IntMap (SimpleRef m a)
 ------------- data types for computations
 
 -- reference reader monad
-data RefReaderT m a
-    = RefReaderT !(RefCreatorT m a)
+data RefReader m a
+    = RefReader !(RefCreator m a)
     | RefReaderTPure a
 
 -- reference creator monad
-newtype RefCreatorT m a
-    = RefCreatorT { unRefCreator :: GlobalVars m -> m a }
+newtype RefCreator m a
+    = RefCreator { unRefCreator :: GlobalVars m -> m a }
 
 -- reference writer monad
-newtype RefWriterT m a
-    = RefWriterT { runRefWriterT :: RefCreatorT m a }
+newtype RefWriter m a
+    = RefWriter { runRefWriterT :: RefCreator m a }
         deriving (Monad, Applicative, Functor, MonadFix)
 
 -- trigger handlers
@@ -150,10 +150,10 @@ newReference st a0 = do
     i <- newId st
     oir <- newSimpleRef $ RefState a0 mempty
 
-    let am :: RefReaderT m a
-        am = RefReaderT $ RefCreatorT $ \st -> getVal st oir i
+    let am :: RefReader m a
+        am = RefReader $ RefCreator $ \st -> getVal st oir i
 
-    let wr rep init upd = RefCreatorT $ \st -> do
+    let wr rep init upd = RefCreator $ \st -> do
 
             RefState aold_ nas <- readSimpleRef oir
             let aold = unsafeCoerce aold_ :: a
@@ -212,7 +212,7 @@ newReference st a0 = do
 
     pure $ Ref $ \ff ->
         buildRefAction ff am
-            (RefWriterT . wr False True . (return .))
+            (RefWriter . wr False True . (return .))
             (wr True)
 
 
@@ -261,16 +261,16 @@ readRef__ :: SimpleRefClass m => GlobalVars m -> Ref m a -> m a
 readRef__ st r = runRefReaderT' st $ readRef r
 
 
---instance SimpleRefClass m => MonadRefCreator (RefCreatorT m) where
---    {-# SPECIALIZE instance MonadRefCreator (RefCreatorT IO) #-}
+--instance SimpleRefClass m => MonadRefCreator (RefCreator m) where
+--    {-# SPECIALIZE instance MonadRefCreator (RefCreator IO) #-}
 
---    type RefReaderSimple (RefCreatorT m) = RefReaderT m
---    type RefRegOf (RefCreatorT m) a = Bool -> (a -> HandT m a) -> RefCreatorT m ()
+--    type RefReaderSimple (RefCreator m) = RefReader m
+--    type RefRegOf (RefCreator m) a = Bool -> (a -> HandT m a) -> RefCreator m ()
 
-newRef a = RefCreatorT $ \st -> newReference st a
+newRef a = RefCreator $ \st -> newReference st a
 
-extendRef :: SimpleRefClass m => Ref m b -> Lens' a b -> a -> RefCreatorT m (Ref m a)
-extendRef m k a0 = RefCreatorT $ \st -> do
+extendRef :: SimpleRefClass m => Ref m b -> Lens' a b -> a -> RefCreator m (Ref m a)
+extendRef m k a0 = RefCreator $ \st -> do
     r <- newReference st a0
     -- TODO: remove getHandler?
     _ <- getHandler st $ do
@@ -279,7 +279,7 @@ extendRef m k a0 = RefCreatorT $ \st -> do
     return r
 
 onChange (RefReaderTPure a) f = RefReaderTPure <$> f a
-onChange m f = RefCreatorT $ \st -> do
+onChange m f = RefCreator $ \st -> do
     r <- newReadReference st (const $ pure (), error "impossible #4") $ \(h, _) -> do
         a <- runRefReaderT' st m
         noDependency st $ do
@@ -288,10 +288,10 @@ onChange m f = RefCreatorT $ \st -> do
     tellHand st $ \msg -> do
         (h, _) <- r
         h msg
-    return $ RefReaderT $ RefCreatorT $ \_ -> r <&> snd
+    return $ RefReader $ RefCreator $ \_ -> r <&> snd
 
 onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
-onChangeEq m f = RefCreatorT $ \st -> do
+onChangeEq m f = RefCreator $ \st -> do
     r <- newReadReference st (const False, (const $ pure (), error "impossible #3")) $ \it@(p, (h, _)) -> do
         a <- runRefReaderT' st m
         noDependency st $ if p a
@@ -304,9 +304,9 @@ onChangeEq m f = RefCreatorT $ \st -> do
         (_, (h, _)) <- r
         h msg
 
-    return $ RefReaderT $ RefCreatorT $ \_ -> r <&> snd . snd
+    return $ RefReader $ RefCreator $ \_ -> r <&> snd . snd
 
-onChangeEq_ m f = RefCreatorT $ \st -> do
+onChangeEq_ m f = RefCreator $ \st -> do
     r <- newReference st (const False, (const $ pure (), error "impossible #3"))
     register st r True $ \it@(p, (h', _)) -> do
         a <- runRefReaderT' st m
@@ -323,7 +323,7 @@ onChangeEq_ m f = RefCreatorT $ \st -> do
     return $ lensMap (_2 . _2) r
 
 onChangeMemo (RefReaderTPure a) f = fmap RefReaderTPure $ join $ f a
-onChangeMemo (RefReaderT mr) f = RefCreatorT $ \st -> do
+onChangeMemo (RefReader mr) f = RefCreator $ \st -> do
     r <- newReadReference st ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
       $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> do
         let it = (p, (m'', h1''))
@@ -348,13 +348,13 @@ onChangeMemo (RefReaderT mr) f = RefCreatorT $ \st -> do
         ((_, ((_, h1, h2), _)), _) <- r
         h1 msg >> h2 msg
 
-    return $ RefReaderT $ RefCreatorT $ \_ -> r <&> snd . snd . fst
+    return $ RefReader $ RefCreator $ \_ -> r <&> snd . snd . fst
 
 onRegionStatusChange h
-    = RefCreatorT $ \st -> tellHand st h
+    = RefCreator $ \st -> tellHand st h
 
-runRefCreatorT :: SimpleRefClass m => ((forall b . RefWriterT m b -> m b) -> RefCreatorT m a) -> m a
-runRefCreatorT f = do
+runRefCreator :: SimpleRefClass m => ((forall b . RefWriter m b -> m b) -> RefCreator m a) -> m a
+runRefCreator f = do
     s <- GlobalVars
             <$> newSimpleRef (const $ pure ())
             <*> newSimpleRef mempty
@@ -367,9 +367,9 @@ runRefCreatorT f = do
 register :: SimpleRefClass m => GlobalVars m -> Ref m a -> Bool -> (a -> HandT m a) -> m ()
 register st r init k = flip unRefCreator st $ runRegisterAction (runRef r k) init
 
-runRefReaderT :: Monad m => RefReaderT m a -> RefCreatorT m a
+runRefReaderT :: Monad m => RefReader m a -> RefCreator m a
 runRefReaderT (RefReaderTPure a) = return a
-runRefReaderT (RefReaderT x) = x
+runRefReaderT (RefReader x) = x
 
 {-# INLINE runRefReaderT' #-}
 runRefReaderT' st = flip unRefCreator st . runRefReaderT
@@ -377,7 +377,7 @@ runRefReaderT' st = flip unRefCreator st . runRefReaderT
 --tellHand :: (SimpleRefClass m) => Handler m -> m ()
 tellHand st h = modSimpleRef (_handlercollection st) $ modify $ \f msg -> f msg >> h msg
 
---getHandler :: SimpleRefClass m => RefCreatorT m a -> RefCreatorT m (Handler m, a)
+--getHandler :: SimpleRefClass m => RefCreator m a -> RefCreator m (Handler m, a)
 getHandler st m = do
     let r = _handlercollection st
     h' <- readSimpleRef r
@@ -416,57 +416,57 @@ revDep k (RefState a b) = k b <&> \b' -> RefState a b'
 
 ------------------------------------------------------- type class instances
 
-instance Monad m => Monoid (RefCreatorT m ()) where
+instance Monad m => Monoid (RefCreator m ()) where
     mempty = return ()
     m `mappend` n = m >> n
 
-instance Monad m => Monad (RefCreatorT m) where
-    return = RefCreatorT . const . return
-    RefCreatorT m >>= f = RefCreatorT $ \r -> m r >>= \a -> unRefCreator (f a) r
+instance Monad m => Monad (RefCreator m) where
+    return = RefCreator . const . return
+    RefCreator m >>= f = RefCreator $ \r -> m r >>= \a -> unRefCreator (f a) r
 
-instance Applicative m => Applicative (RefCreatorT m) where
-    pure = RefCreatorT . const . pure
-    RefCreatorT f <*> RefCreatorT g = RefCreatorT $ \r -> f r <*> g r
+instance Applicative m => Applicative (RefCreator m) where
+    pure = RefCreator . const . pure
+    RefCreator f <*> RefCreator g = RefCreator $ \r -> f r <*> g r
 
-instance Functor m => Functor (RefCreatorT m) where
-    fmap f (RefCreatorT m) = RefCreatorT $ fmap f . m
+instance Functor m => Functor (RefCreator m) where
+    fmap f (RefCreator m) = RefCreator $ fmap f . m
 
-instance MonadFix m => MonadFix (RefCreatorT m) where
-    mfix f = RefCreatorT $ \r -> mfix $ \a -> unRefCreator (f a) r
+instance MonadFix m => MonadFix (RefCreator m) where
+    mfix f = RefCreator $ \r -> mfix $ \a -> unRefCreator (f a) r
 
-instance Functor m => Functor (RefReaderT m) where
+instance Functor m => Functor (RefReader m) where
     fmap f (RefReaderTPure x) = RefReaderTPure $ f x
-    fmap f (RefReaderT m) = RefReaderT $ fmap f m
+    fmap f (RefReader m) = RefReader $ fmap f m
 
-instance Applicative m => Applicative (RefReaderT m) where
+instance Applicative m => Applicative (RefReader m) where
     pure = RefReaderTPure
     RefReaderTPure f <*> RefReaderTPure a = RefReaderTPure $ f a
-    mf <*> ma = RefReaderT $ runRefReaderT mf <*> runRefReaderT ma
+    mf <*> ma = RefReader $ runRefReaderT mf <*> runRefReaderT ma
       where
         runRefReaderT (RefReaderTPure a) = pure a
-        runRefReaderT (RefReaderT x) = x
+        runRefReaderT (RefReader x) = x
 
-instance Monad m => Monad (RefReaderT m) where
+instance Monad m => Monad (RefReader m) where
     return = RefReaderTPure
     RefReaderTPure r >>= f = f r
-    RefReaderT mr >>= f = RefReaderT $ mr >>= runRefReaderT . f
+    RefReader mr >>= f = RefReader $ mr >>= runRefReaderT . f
 
 
 
 currentValue (RefReaderTPure a) = RefReaderTPure a
-currentValue (RefReaderT (RefCreatorT m)) = RefReaderT $ RefCreatorT $ \st -> noDependency st $ m st
+currentValue (RefReader (RefCreator m)) = RefReader $ RefCreator $ \st -> noDependency st $ m st
 
 readRef r = runReaderAction $ runRef r Const
 
 readerToCreator = runRefReaderT
 
-readerToWriter = RefWriterT . runRefReaderT
+readerToWriter = RefWriter . runRefReaderT
 
-instance MonadTrans RefWriterT where
-    lift = RefWriterT . lift
+instance MonadTrans RefWriter where
+    lift = RefWriter . lift
 
-instance MonadTrans RefCreatorT where
-    lift m = RefCreatorT $ \_ -> m
+instance MonadTrans RefCreator where
+    lift m = RefCreator $ \_ -> m
 
 wr = runRefWriterT
 
@@ -492,21 +492,21 @@ class ( Functor (RefActionFunctor f)
 
     buildRefAction
         :: (a -> RefActionFunctor f a)
-        -> RefReaderT (RefActionCreator f) a
-        -> ((a -> a) -> RefWriterT (RefActionCreator f) ())
+        -> RefReader (RefActionCreator f) a
+        -> ((a -> a) -> RefWriter (RefActionCreator f) ())
         -> RefRegOf (RefActionCreator f) a
         -> f ()
 
-    joinRefAction :: RefReaderT (RefActionCreator f) (f ()) -> f ()
+    joinRefAction :: RefReader (RefActionCreator f) (f ()) -> f ()
 
     buildUnitRefAction :: (() -> RefActionFunctor f ()) -> f ()
 
-type RefRegOf m a = Bool -> (a -> HandT m a) -> RefCreatorT m ()
+type RefRegOf m a = Bool -> (a -> HandT m a) -> RefCreator m ()
 
 
 -------------------- reader action
 
-newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReaderT m b }
+newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReader m b }
 
 instance
     ( Applicative m, Monad m
@@ -522,7 +522,7 @@ instance
 
 -------------------- writer action
 
-newtype WriterAction m a = WriterAction { runWriterAction :: RefWriterT m () }
+newtype WriterAction m a = WriterAction { runWriterAction :: RefWriter m () }
 
 instance
     ( Applicative m, Monad m
@@ -537,14 +537,14 @@ instance
 
 -------------------- register action
 
-newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCreatorT m a }
+newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCreator m a }
 
 instance SimpleRefClass m => RefAction (RegisterAction m) where
     type RefActionFunctor (RegisterAction m) = HandT m
     type RefActionCreator (RegisterAction m) = m
 
     buildRefAction f _ _ g = RegisterAction $ \init -> g init f
-    joinRefAction m = RegisterAction $ \init -> RefCreatorT $ \st -> do
+    joinRefAction m = RegisterAction $ \init -> RefCreator $ \st -> do
 
         r <- newReadReference st (const $ pure ()) $ \kill -> do
             kill Kill
@@ -568,7 +568,7 @@ lensMap k (Ref r) = Ref $ r . k
 unitRef :: Ref m ()
 unitRef = Ref buildUnitRefAction
 
-joinRef :: RefReaderT m (Ref m a) -> Ref m a
+joinRef :: RefReader m (Ref m a) -> Ref m a
 joinRef mr = Ref $ \f -> joinRefAction (mr <&> \r -> runRef r f)
 
 ----------------------
@@ -581,7 +581,7 @@ type RegionStatusChangeHandler m = RegionStatusChange -> m ()
 
 ------------------
 
---    id :: RefWriterT m a -> m a
+--    id :: RefWriter m a -> m a
 
 writeRef (Ref r) = id . runWriterAction . r . const . Identity
 
@@ -590,7 +590,7 @@ r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
 --onChangeEq r f = fmap readRef $ onChangeEq_ r f
 
 
-memoRead :: SimpleRefClass m => RefCreatorT m a -> RefCreatorT m (RefCreatorT m a)
+memoRead :: SimpleRefClass m => RefCreator m a -> RefCreator m (RefCreator m a)
 memoRead g = do
     s <- newRef Nothing
     pure $ readerToCreator (readRef s) >>= \x -> case x of

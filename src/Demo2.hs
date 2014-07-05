@@ -3,40 +3,53 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 module Demo2 where
 
+import Data.Monoid
 import Data.Function
 import Data.List
 import Data.Maybe
-import Data.Traversable hiding (mapM)
 import qualified Data.IntMap as Map
 import Control.Applicative
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Reader
-import Control.Monad.Writer
 import Control.Lens.Simple
 
-import Data.LensRef.Common
+import Data.LensRef hiding (readRef, writeRef, lensMap, modRef, joinRef, Ref, RefReader, RefWriter, RefCreator)
 import qualified Data.LensRef as Ref
-import Data.LensRef hiding (readRef, writeRef, lensMap, modRef, joinRef, Ref)
+
+----------------------------
+
+type Base = IO
+
+type Rt = ReaderT St Base
+
+type RefCreator = Ref.RefCreator Rt
+type RefReader  = Ref.RefReader Rt
+type RefWriter  = Ref.RefWriter Rt
+
+type Ref = Ref.Ref Rt
+
+---------------------------------
 
 class RefClass r where
-    readRef :: r a -> RefReader a
+    readRef  :: r a ->      RefReader a
     writeRef :: r a -> a -> RefWriter ()
-    lensMap :: Lens' a b -> r a -> r b
-    joinRef :: RefReader (r a) -> r a
-
-r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
+    lensMap  :: Lens' a b -> r a -> r b
+    joinRef  :: RefReader (r a) -> r a
+    toRef :: r a -> Ref a
 
 infixr 8 `lensMap`
 
+r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
+
 instance RefClass Ref where
-    readRef = Ref.readRef
+    readRef  = Ref.readRef
     writeRef = Ref.writeRef
-    lensMap = Ref.lensMap
-    joinRef = Ref.joinRef
+    lensMap  = Ref.lensMap
+    joinRef  = Ref.joinRef
+    toRef = id
 
 data EqRef a = EqRef
     { runEqRef :: Ref a
@@ -44,45 +57,20 @@ data EqRef a = EqRef
     }
 
 instance RefClass EqRef where
-    readRef = readRef . runEqRef
-    writeRef r = writeRef (runEqRef r)
-    lensMap k (EqRef r c) = EqRef
-        { runEqRef = lensMap k r
-        , changing = \b -> readRef r >>= \a -> c $ set k b a
-        }
-    joinRef m = EqRef
-        { runEqRef = joinRef $ m <&> runEqRef
-        , changing = \a -> m >>= \(EqRef _ k) -> k a
-        }
+    readRef  = readRef  . runEqRef
+    writeRef = writeRef . runEqRef
+    lensMap k (EqRef r c) = EqRef (lensMap k r) $ \b -> readRef r >>= c . set k b
+    joinRef m = EqRef (joinRef $ m <&> runEqRef) $ \a -> m >>= (`changing` a)
+    toRef = runEqRef
 
-hasEffect ::
-    EqRef a
-    -> (a -> a)
-    -> RefReader Bool
-hasEffect (EqRef r c) f = readRef r >>= c . f
-
-toEqRef :: (Eq a) => Ref a -> EqRef a
+toEqRef :: Eq a => Ref a -> EqRef a
 toEqRef r = EqRef r $ \x -> readRef r <&> (/= x)
 
-
-
---------------------------------------------------------------------------------
-
-type Base = IO
-
-type Rt = ReaderT St Base
-
-type RefCreator = RefCreatorT (Rt)
-type RefReader  = RefReaderT  (Rt)
-type RefWriter  = RefWriterT  (Rt)
-
-type Ref = Ref.Ref (Rt)
+-----------------
 
 data St = St
-    { newControlId      :: Base ControlId
-    , registerControl   :: ControlId -> [Action] -> Base ()
-    , unregisterControl :: ControlId -> Base ()
-    , logfun            :: Maybe (Doc -> Base ())
+    { newControl        :: Base ControlId
+    , setControlActions :: ControlId -> [Action] -> Base ()
     }
 
 type ControlId = Int
@@ -92,180 +80,139 @@ data Action
     | Put   (String -> RefWriter ())   -- entry
     | Get   (RefReader String)         -- entry and dynamic label
 
-type Widget = RefCreator (Layout)
+--------------------------------------------------------------------------------
+
+type Widget = RefCreator Layout
 
 data Layout
-    = Leaf Doc
-    | Node Dir [Layout]
-    | Dyn (RefReader (Layout))
-    | Keret (Layout)
+    = Label String
+    | Control ControlId Color String
+    | Horiz [Layout]
+    | Vert  [Layout]
+    | Dyn (RefReader Layout)
+    | Keret Layout
 
-data Dir = Horiz | Vert
+type Color = Int
 
+render :: Layout -> RefReader [String]
+render = fmap snd . f
+  where
+    f (Label s) = return (length s, [color 35 s])
+    f (Control i c s) = return (length n + length s, [color 31 n ++ color c s])
+      where n = show i
+    f (Horiz l) = mapM f l <&> foldr horiz (0, [])
+      where
+        horiz (0, _) ys = ys
+        horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
+          where
+            h = max (length xs) (length ys)
+            ext n l = take h $ l ++ repeat (replicate n ' ')
+    f (Vert l) = mapM f l <&> foldr vert (0, [])
+      where
+        vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
+          where
+            k = max n m
+            pad n l = l ++ replicate n ' '
+    f (Dyn m) = m >>= f
+    f (Keret l) = f l <&> \(n, s) -> (n+2, map ("  " ++) $ replicate n ' ' : s)
+
+    color :: Color -> String -> String
+    color (-1) s = s
+    color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
 
 --------------------------------------------------------------------------------
-
-type Doc = (Int, [String])
-
-text s = (length s, [s])
-
-emptyDoc = (0, [])
-
-horiz, vert :: Doc -> Doc -> Doc
-
-vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
-  where
-    k = max n m
-    pad n l = l ++ replicate n ' '
-
-horiz (0, _) ys = ys
-horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
-  where
-    h = max (length xs) (length ys)
-
-    ext n l = take h $ l ++ repeat (replicate n ' ')
-
-keret :: Doc -> Doc
-keret (n, s) = (n+2, [x] ++ map f s {- ++ [x] -}) where
-    x = "  " ++ replicate n ' ' -- ++ "+"
-    f s = "  " ++ s -- ++ "|"
-
---------------------------------------------------------------------------------
-
-dyn :: RefReader (Layout) -> Widget
-dyn v = do
-    fd <- lift $ asks logfun
-    maybe (pure ()) (void . onChangeEq (v >>= mk) . redraw') fd
-    return $ Dyn v
-  where
-    redraw' out ss = lift $ lift $ out ss
-
-    mk :: Layout -> RefReader Doc
-    mk (Leaf s) = return s
-    mk (Node Horiz l) = mapM mk l <&> foldr horiz emptyDoc
-    mk (Node Vert l) = mapM mk l <&> foldr vert emptyDoc
-    mk (Dyn m) = m >>= mk --return ["*"]
-    mk (Keret l) = mk l <&> keret
 
 ctrl :: [Action] -> RefCreator ControlId
 ctrl c = do
     st <- lift ask
-    i <- lift $ lift $ newControlId st
-    lift $ lift $ registerControl st i c
-    onRegionStatusChange $ \msg -> lift $ do
-        maybe (pure ()) ($ text (show msg ++ " " ++ show i)) $ logfun st
-        case msg of
-            Unblock -> registerControl st i c
-            _ -> unregisterControl st i
+    i <- lift $ lift $ newControl st
+    lift $ lift $ setControlActions st i c
+    onRegionStatusChange $ \msg -> lift $ setControlActions st i $ case msg of
+        Unblock -> c
+        _ -> []
     return i
 
 label :: String -> Widget
-label = pure . leaf'
+label = pure . Label
 
 keret' :: Widget -> Widget
 keret' w = w <&> Keret
 
-color :: Int -> String -> String
-color (-1) s = s
-color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
-
-red = color 31
-
-leaf :: Int -> Int -> String -> Layout
-leaf c i s = Leaf (length n + length s, [red n ++ color c s])
-  where
-    n = if i >= 0 then show (i :: Int) else "-"
-
-leaf' s = Leaf (length s, [color 35 s])
-
 dynLabel :: RefReader String -> Widget
 dynLabel r = do
     i <- ctrl [Get r]
-    dyn $ r <&> \s -> leaf 44 i $ " " ++ s ++ " "
+    return $ Dyn $ r <&> \s -> Control i 44 $ " " ++ s ++ " "
 
 primButton
     :: RefReader String     -- ^ dynamic label of the button
+    -> Maybe (RefReader Color)
     -> RefReader Bool       -- ^ the button is active when this returns @True@
     -> RefWriter ()        -- ^ the action to do when the button is pressed
     -> Widget
-primButton name vis act = dyn . join =<< do
+primButton name col vis act = do
     i <- ctrl [Click act, Get name]
-    onChangeMemo vis $ \v -> case v of
-        True -> do
-            return $ return $ name <&> leaf 37 i
-        False -> return $ return $ name <&> leaf 35 i
+    _ <- onChange vis $ \v -> lift $ do
+        f <- asks setControlActions
+        lift $ f i $ if v then [Click act, Get name] else []
+    return . Dyn $ Control i <$> (fromMaybe (pure 37) col >>= \c -> vis <&> bool c 35) <*> name
 
-checkbox :: Ref Bool -> Widget
-checkbox r = primButton (readRef r <&> show) (pure True) $ modRef r not
-
-primEntry :: (RefClass r) => (String -> Bool) -> r String -> Widget
+primEntry :: (RefClass r) => RefReader Bool -> r String -> Widget
 primEntry ok r = do
     i <- ctrl [Put $ writeRef r, Get $ readRef r]
-    dyn $ readRef r <&> \s -> leaf 42 i $ brack (ok s) $ " " ++ s ++ " "
-          where
-            brack True s = s
-            brack _ s = "{" ++ s ++ "}"
+    return $ Dyn $ Control i <$> (ok <&> bool 42 41) <*> (readRef r <&> \s -> " " ++ s ++ " ")
 
 vertically :: [Widget] -> Widget
-vertically ws = sequenceA ws <&> Node Vert
+vertically ws = sequence ws <&> Vert
 
 horizontally :: [Widget] -> Widget
-horizontally ws = sequenceA ws <&> Node Horiz
+horizontally ws = sequence ws <&> Horiz
 
 cell :: Eq a => RefReader a -> (a -> Widget) -> Widget
-cell r f = onChangeMemo r (\v -> f v <&> pure) >>= dyn
+cell r f = onChangeMemo r (\v -> f v <&> pure) <&> Dyn
 
 runWidget
-    :: Maybe (Doc -> Base ())
-    -> Maybe (Doc -> Base ())
+    :: Maybe ([String] -> Base ())
     -> Widget
-    -> Base (Int -> Base (), Int -> String -> Base (), Int -> Base String, Base Doc)
-runWidget log autodraw cw = do
-  controlmap <- newSimpleRef mempty
-  counter <- newSimpleRef (0 :: Int)
-  let st = St
-        { newControlId = modSimpleRef counter $ state $ \c -> (c, succ c)
-        , registerControl = \i cs -> modSimpleRef controlmap $ modify $ Map.insert i cs
-        , unregisterControl = \i -> modSimpleRef controlmap $ modify $ Map.delete i
-        , logfun = log
-        }
-      rr :: ReaderT (St) Base a -> Base a
-      rr = flip runReaderT st
-  rr $ runRefCreatorT $ \runRefWriter -> do
-    w <- keret' cw
+    -> Base (Int -> Base (), Int -> String -> Base (), Int -> Base String, Base [String])
+runWidget autodraw cw = do
+    controlmap <- newSimpleRef mempty
+    counter <- newSimpleRef (0 :: Int)
+    let rr :: Rt a -> Base a
+        rr = flip runReaderT St
+            { newControl = modSimpleRef counter $ state $ \c -> (c, succ c)
+            , setControlActions = \i cs -> modSimpleRef controlmap $ modify $ case cs of
+                [] -> Map.delete i
+                _ -> Map.insert i cs
+            }
+    rr $ runRefCreator $ \runRefWriter -> do
+        w <- cw <&> render
 
-    maybe (pure ()) (\out -> void $ onChangeEq (mk w) $ lift . lift . out) autodraw
+        maybe (pure ()) (\out -> void $ onChangeEq w $ lift . lift . out) autodraw
 
-    let click cs = head $ [rr $ runRefWriter act | Click act <- cs] ++ [fail "not a button or checkbox"]
-        put cs s = head $ [rr $ runRefWriter $ act s | Put act <- cs] ++ [fail "not an entry"]
-        get cs   = head $ [rr $ runRefWriter $ readerToWriter act | Get act <- cs] ++ [fail "not an entry or label"]
+        let click cs = head $ [rr $ runRefWriter act | Click act <- cs] ++ [fail "not a button or checkbox"]
+            put cs s = head $ [rr $ runRefWriter $ act s | Put act <- cs] ++ [fail "not an entry"]
+            get cs   = head $ [rr $ runRefWriter $ readerToWriter act | Get act <- cs] ++ [fail "not an entry or label"]
 
-        lookup_ :: Int -> Base [Action]
-        lookup_ i = readSimpleRef controlmap >>= \m -> case Map.lookup i m of
-            Just cs -> pure cs
-            _ -> fail "control not registered"
+            lookup_ :: Int -> Base [Action]
+            lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
 
-        draw = rr $ runRefWriter $ readerToWriter $ mk w
+            draw = rr $ runRefWriter $ readerToWriter w
 
-    return (lookup_ >=> click, flip $ \s -> lookup_ >=> (`put` s), lookup_ >=> get, draw)
-  where
-
-    mk :: Layout -> RefReader Doc
-    mk (Leaf s) = return s
-    mk (Node Horiz l) = mapM mk l <&> foldr horiz emptyDoc
-    mk (Node Vert l) = mapM mk l <&> foldr vert emptyDoc
-    mk (Dyn m) = m >>= mk
-    mk (Keret l) = mk l <&> keret
+        return (lookup_ >=> click, flip $ \s -> lookup_ >=> (`put` s), lookup_ >=> get, draw)
 
 --------------------------------------------------------------------------------
---------------------------------------------------------------------------------
+
+checkbox :: Ref Bool -> Widget
+checkbox r = primButton (readRef r <&> show) Nothing (pure True) $ modRef r not
 
 notebook :: [(String, Widget)] -> Widget
 notebook ws = do
     i <- newRef (0 :: Int)
     vertically
-        [ horizontally [ button (readRef i <&> \v -> ['*'| v == n] ++ s) $ pure $ Just $ writeRef i n
-                       | (n, (s,_)) <- zip [0..] ws]
+        [ horizontally
+            [ primButton (pure s) (Just $ readRef i <&> bool 32 37 . (== n)) (pure True) $ writeRef i n
+            | (n, (s,_)) <- zip [0..] ws
+            ]
         , keret' $ cell (readRef i) $ \i -> snd (ws !! i)
         ]
 
@@ -274,7 +221,7 @@ button
     :: RefReader String     -- ^ dynamic label of the button
     -> RefReader (Maybe (RefWriter ()))     -- ^ when the @Maybe@ readRef is @Nothing@, the button is inactive
     -> Widget
-button r fm = primButton r (fmap isJust fm) (readerToWriter fm >>= maybe (pure ()) id)
+button r fm = primButton r Nothing (fmap isJust fm) $ readerToWriter fm >>= fromMaybe (pure ())
 
 -- | Click which inactivates itself automatically.
 smartButton
@@ -283,43 +230,40 @@ smartButton
     -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference. When the button is pressed, the readRef of the reference is modified with this function.
     -> Widget
 smartButton s r f
-    = primButton s (hasEffect r f) (modRef r f)
+    = primButton s Nothing (readRef r >>= changing r . f) (modRef r f)
 
 emptyWidget :: Widget
 emptyWidget = horizontally []
 
--- | Text entry.
+-- | Label entry.
 entry :: Ref String -> Widget
-entry r = primEntry (const True) r
+entry r = primEntry (pure True) r
 
-entryShow :: forall a r. (Show a, Read a, RefClass r) => r a -> Widget
-entryShow r_ = primEntry isOk r
+entryShow :: (Show a, Read a, RefClass r) => r a -> Widget
+entryShow r = do
+    x <- readerToCreator $ readRef r
+    v <- extendRef (toRef r) (lens fst set') (x, Nothing)
+    primEntry (readRef v <&> isNothing . snd) $ lens get set `lensMap` v
   where
-    r = showLens `lensMap` r_
-    isOk s = case (reads s :: [(a, String)]) of
-        ((_,""):_) -> True
-        _ -> False
+    set' t@(v',_) v | show v == show v' = t
+    set' _ v = (v, Nothing)
 
-showLens :: (Show a, Read a) => Lens' a String
-showLens = lens show $ \def s -> maybe def fst $ listToMaybe $ reads s
+    get (_, Just s) = s
+    get (v, _) = show v
+
+    set (v, _) s = case reads s of
+        ((x,""):_) -> (x, Nothing)
+        _ -> (v, Just s)
 
 --------------------------------------------------------------------------------
 
-demo :: Bool -> Bool -> IO (Int -> IO (), Int -> String -> IO (), Int -> IO String, IO ())
-demo log autodraw = do
-{-
-    log' <- if log
-          then do
-            fd <- openFd "out" WriteOnly Nothing defaultFileFlags
-            return $ Just $ void . mapM_ (fdWrite fd . (++ "\n")) . snd
-          else return Nothing
--}
-    let log' = Nothing
-    (click, put, get, draw) <- runWidget log' (if autodraw then Just $ mapM_ putStrLn . (++ [[]]) . snd else Nothing) $ do
+demo :: Bool -> IO (Int -> IO (), Int -> String -> IO (), Int -> IO String, IO ())
+demo autodraw = do
+    (click, put, get, draw) <- runWidget (if autodraw then Just $ mapM_ putStrLn . (++ [[]]) else Nothing) $ do
         s <- newRef True
         st <- newRef []
-        intListEditor (0, True) 15 st s
-    return (click, put, get, draw >>= mapM_ putStrLn . snd)
+        keret' $ intListEditor (0, True) 15 st s
+    return (click, put, get, draw >>= mapM_ putStrLn)
 
 
 intListEditor
@@ -334,23 +278,19 @@ intListEditor def maxi list_ range = do
     notebook
         [ (,) "Editor" $ vertically
             [ horizontally
-                [ entryShow len
-                , label "items"
-                , vertically
-                    [ horizontally
-                        [ smartButton (pure "AddItem") len (+1)
-                        , smartButton (pure "RemoveItem") len (+(-1))
-                        , smartButton (readRef len <&> \n -> "RemoveAll(" ++ show n ++ ")") len $ const 0
-                        ]
-                    , horizontally
-                        [ button (pure "Undo") undo
-                        , button (pure "Redo") redo
-                        ]
-                    ]
+                [ button (pure "Undo") undo
+                , button (pure "Redo") redo
                 ]
             , horizontally
-                [ smartButton (pure "All+1")         list $ map $ over _1 (+1)
-                , smartButton (pure "All-1")         list $ map $ over _1 (+(-1))
+                [ entryShow len
+                , label "items"
+                , smartButton (pure "AddItem") len (+1)
+                , smartButton (pure "RemoveItem") len (+(-1))
+                , smartButton (readRef len <&> \n -> "RemoveAll(" ++ show n ++ ")") len $ const 0
+                ]
+            , horizontally
+                [ smartButton (pure "All+1")      list $ map $ over _1 (+1)
+                , smartButton (pure "All-1")      list $ map $ over _1 (+(-1))
                 , smartButton (pure "Sort")       list $ sortBy (compare `on` fst)
                 ]
             , horizontally
@@ -452,7 +392,7 @@ undoLens eq = lens get set where
     set (xs, _) x = (x : xs, [])
 
 {-
---notebook :: RefCreatorT m Widget
+--notebook :: RefCreator m Widget
 notebook_ = runWidget $ do
     buttons <- newRef ("",[])
     let h i b = horizontally

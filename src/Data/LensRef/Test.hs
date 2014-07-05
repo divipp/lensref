@@ -24,7 +24,7 @@ import Data.LensRef
 
 type Prog = SimpleRefT (Writer [Maybe (Either String String)])
 
---message :: String -> RefCreatorT Prog ()
+--message :: String -> RefCreator Prog ()
 message = lift . message_
 
 message_ s = tell [Just $ Right $ "message: " ++ s]
@@ -49,7 +49,7 @@ runProg name = showRes . f [] . snd . runWriter . runSimpleRefT
 runTests :: IO ()
 runTests = do
 
-    let runTest name t = runProg name $ join $ runRefCreatorT $ \runRefWriter -> do
+    let runTest name t = runProg name $ join $ runRefCreator $ \runRefWriter -> do
             fmap runRefWriter t
 
         a ==? b = when (a /= b) $ message $ show a ++ " /= " ++ show b
@@ -839,7 +839,7 @@ runPerformanceTests name n = do
 
         r ==> v = readerToWriter $ readRef r >>= (==? v)
 
-    join $ runRefCreatorT $ \runRefWriter -> fmap runRefWriter $ case name of
+    join $ runRefCreator $ \runRefWriter -> fmap runRefWriter $ case name of
         "create" -> do
             rs <- replicateM n $ newRef 'x'
             return $ do
@@ -895,8 +895,8 @@ undoTr
     :: (SimpleRefClass m) =>
        (a -> a -> Bool)     -- ^ equality on state
     -> Ref m a             -- ^ reference of state
-    -> RefCreatorT m ( RefReaderT m (Maybe (RefWriterT m ()))
-           , RefReaderT m (Maybe (RefWriterT m ()))
+    -> RefCreator m ( RefReader m (Maybe (RefWriter m ()))
+           , RefReader m (Maybe (RefWriter m ()))
            )  -- ^ undo and redo actions
 undoTr eq r = do
     ku <- extendRef r (undoLens eq) ([], [])

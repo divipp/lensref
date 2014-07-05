@@ -10,7 +10,7 @@ import Data.LensRef
 main :: IO ()
 main = do
     exit <- newEmptyMVar
-    runRefCreatorT $ \unlift -> do
+    runRefCreator $ \unlift -> do
 
         a <- newRef False
         b <- newRef False

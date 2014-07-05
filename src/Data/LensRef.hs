@@ -1,12 +1,12 @@
 {-# LANGUAGE CPP #-}
 module Data.LensRef
     ( -- * Monads
-      RefReaderT            -- RefReader
-    , RefCreatorT           -- RefCreator
-    , RefWriterT            -- RefWriter
+      RefReader            -- RefReader
+    , RefCreator           -- RefCreator
+    , RefWriter            -- RefWriter
     , readerToWriter
     , readerToCreator
-    , runRefCreatorT        -- runRefCreator
+    , runRefCreator        -- runRefCreator
 
     -- * References
     , Ref
@@ -33,6 +33,7 @@ module Data.LensRef
 
     -- * Simple references
     , SimpleRefClass (..)
+    , modSimpleRef
     ) where
 
 import Data.LensRef.Common
