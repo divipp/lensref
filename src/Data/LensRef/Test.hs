@@ -17,7 +17,7 @@ import Control.Monad.Writer hiding (Any)
 import Control.Arrow ((***))
 import Control.Lens.Simple
 
-import Data.LensRef.Common
+import Data.LensRef.SimpleRef
 import Data.LensRef
 
 ------------------------------------

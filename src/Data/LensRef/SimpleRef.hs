@@ -4,7 +4,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE GADTs #-}
-module Data.LensRef.Common where
+module Data.LensRef.SimpleRef where
 
 import Data.IORef
 import qualified Data.IntMap as Map

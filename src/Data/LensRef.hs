@@ -36,7 +36,7 @@ module Data.LensRef
     , modSimpleRef
     ) where
 
-import Data.LensRef.Common
+import Data.LensRef.SimpleRef
 #ifdef __PURE__
 import Data.LensRef.Pure
 #else

@@ -51,7 +51,7 @@ import Control.Lens.Simple
 
 import Unsafe.Coerce
 
-import Data.LensRef.Common
+import Data.LensRef.SimpleRef
 
 ----------------------------------- data types
 

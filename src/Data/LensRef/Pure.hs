@@ -59,7 +59,7 @@ import Control.Lens.Simple
 --import Debug.Trace
 import Unsafe.Coerce
 
-import Data.LensRef.Common
+import Data.LensRef.SimpleRef
 
 ---------------------------------
 

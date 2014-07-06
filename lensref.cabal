@@ -57,7 +57,7 @@ library
                     Demo2
   other-modules:
                     Control.Lens.Simple
-                    Data.LensRef.Common
+                    Data.LensRef.SimpleRef
                     Data.LensRef.Pure
                     Data.LensRef.Fast
   if flag(tests)
