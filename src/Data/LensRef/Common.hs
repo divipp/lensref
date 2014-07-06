@@ -3,11 +3,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GADTs #-}
 module Data.LensRef.Common where
 
-import Data.Monoid hiding (Any)
 import Data.IORef
 import qualified Data.IntMap as Map
 import Control.Applicative
@@ -15,38 +13,6 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 
 import Unsafe.Coerce
-
--------------
-
-newtype MonadMonoid m a = MonadMonoid
-    { runMonadMonoid :: m a }
-        deriving (Monad, Applicative, Functor)
-
-instance MonadTrans MonadMonoid where
-    lift = MonadMonoid
-
--- Applicative would be enough
-instance (Monad m, Monoid a) => Monoid (MonadMonoid m a) where
-    mempty = MonadMonoid $ return mempty
-    MonadMonoid a `mappend` MonadMonoid b = MonadMonoid $ liftM2 mappend a b
-
-------------------------
-
-merge :: Ord a => [a] -> [a] -> [a]
-merge [] xs = xs
-merge xs [] = xs
-merge (x:xs) (y:ys) = case compare x y of
-    LT -> x: merge xs (y:ys)
-    GT -> y: merge (x:xs) ys
-    EQ -> x: merge xs ys
-
-mergeBy :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
-mergeBy _ [] xs = xs
-mergeBy _ xs [] = xs
-mergeBy p (x:xs) (y:ys) = case p x y of
-    LT -> x: mergeBy p xs (y:ys)
-    GT -> y: mergeBy p (x:xs) ys
-    EQ -> x: mergeBy p xs ys
 
 ----------------
 
@@ -114,5 +80,5 @@ instance (Monad m, Functor m) => SimpleRefClass (SimpleRefT m) where
     writeSimpleRef (RefSimpleRefT i) a = modify $ Map.insert i (Any a)
 
 runSimpleRefT :: Monad m => SimpleRefT m a -> m a
-runSimpleRefT = flip evalStateT mempty
+runSimpleRefT = flip evalStateT Map.empty
 
