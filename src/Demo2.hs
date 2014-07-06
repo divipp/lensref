@@ -61,10 +61,7 @@ toEqRef r = EqRef r $ \x -> readRef r <&> (/= x)
 
 -----------------
 
-data St = St
-    { newControl        :: Base ControlId
-    , setControlActions :: ControlId -> [Action] -> Base ()
-    }
+newtype St = St (RefReader [Action] -> RefCreator ControlId)
 
 type ControlId = Int
 
@@ -117,14 +114,8 @@ render = fmap snd . f
 
 ctrl :: RefReader [Action] -> RefCreator ControlId
 ctrl c = do
-    st <- lift ask
-    i <- lift $ lift $ newControl st
-    _ <- onChange c $ \c -> do
-        lift $ lift $ setControlActions st i c
-    onRegionStatusChange_ $ \msg -> c <&> \c -> lift $ setControlActions st i $ case msg of
-        Unblock -> c
-        _ -> []
-    return i
+    St f <- lift ask
+    f c
 
 label :: String -> Widget
 label = pure . Label
@@ -168,13 +159,18 @@ runWidget
 runWidget autodraw cw = do
     controlmap <- newSimpleRef mempty
     counter <- newSimpleRef (0 :: Int)
+
     let rr :: Rt a -> Base a
-        rr = flip runReaderT St
-            { newControl = modSimpleRef counter $ state $ \c -> (c, succ c)
-            , setControlActions = \i cs -> modSimpleRef controlmap $ modify $ case cs of
-                [] -> Map.delete i
-                _ -> Map.insert i cs
-            }
+        rr = flip runReaderT $ St $ \c -> do
+                i <- lift $ lift $ modSimpleRef counter $ state $ \c -> (c, succ c)
+                let setControlActions cs = modSimpleRef controlmap $ modify $ case cs of
+                        [] -> Map.delete i
+                        _ -> Map.insert i cs
+                    f Unblock = c
+                    f _ = pure []
+                _ <- onChange c $ lift . lift . setControlActions
+                onRegionStatusChange_ $ \msg -> f msg <&> lift . setControlActions
+                return i
     rr $ runRefCreator $ \runRefWriter -> do
         w <- cw <&> render
 
