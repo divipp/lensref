@@ -34,34 +34,27 @@ type Ref = Ref.Ref Rt
 ---------------------------------
 
 class RefClass r where
-    readRef  :: r a ->      RefReader a
-    writeRef :: r a -> a -> RefWriter ()
+    toRef    :: r a -> Ref a
     lensMap  :: Lens' a b -> r a -> r b
     joinRef  :: RefReader (r a) -> r a
-    toRef :: r a -> Ref a
 
 infixr 8 `lensMap`
 
-r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
+readRef  = Ref.readRef  . toRef
+writeRef = Ref.writeRef . toRef
+modRef   = Ref.modRef   . toRef
 
 instance RefClass Ref where
-    readRef  = Ref.readRef
-    writeRef = Ref.writeRef
+    toRef    = id
     lensMap  = Ref.lensMap
     joinRef  = Ref.joinRef
-    toRef = id
 
-data EqRef a = EqRef
-    { runEqRef :: Ref a
-    , changing :: a -> RefReader Bool
-    }
+data EqRef a = EqRef (Ref a) (a -> RefReader Bool)
 
 instance RefClass EqRef where
-    readRef  = readRef  . runEqRef
-    writeRef = writeRef . runEqRef
+    toRef (EqRef r _) = r
     lensMap k (EqRef r c) = EqRef (lensMap k r) $ \b -> readRef r >>= c . set k b
-    joinRef m = EqRef (joinRef $ m <&> runEqRef) $ \a -> m >>= (`changing` a)
-    toRef = runEqRef
+    joinRef m = EqRef (joinRef $ m <&> toRef) $ \a -> m >>= \(EqRef _ c) -> c a
 
 toEqRef :: Eq a => Ref a -> EqRef a
 toEqRef r = EqRef r $ \x -> readRef r <&> (/= x)
@@ -122,12 +115,13 @@ render = fmap snd . f
 
 --------------------------------------------------------------------------------
 
-ctrl :: [Action] -> RefCreator ControlId
+ctrl :: RefReader [Action] -> RefCreator ControlId
 ctrl c = do
     st <- lift ask
     i <- lift $ lift $ newControl st
-    lift $ lift $ setControlActions st i c
-    onRegionStatusChange $ \msg -> lift $ setControlActions st i $ case msg of
+    _ <- onChange c $ \c -> do
+        lift $ lift $ setControlActions st i c
+    onRegionStatusChange_ $ \msg -> c <&> \c -> lift $ setControlActions st i $ case msg of
         Unblock -> c
         _ -> []
     return i
@@ -140,8 +134,8 @@ keret' w = w <&> Keret
 
 dynLabel :: RefReader String -> Widget
 dynLabel r = do
-    i <- ctrl [Get r]
-    return $ Dyn $ r <&> \s -> Control i 44 $ " " ++ s ++ " "
+    i <- ctrl $ pure [Get r]
+    return $ Dyn $ Control i 44 <$> (r <&> \s -> " " ++ s ++ " ")
 
 primButton
     :: RefReader String     -- ^ dynamic label of the button
@@ -150,15 +144,12 @@ primButton
     -> RefWriter ()        -- ^ the action to do when the button is pressed
     -> Widget
 primButton name col vis act = do
-    i <- ctrl [Click act, Get name]
-    _ <- onChange vis $ \v -> lift $ do
-        f <- asks setControlActions
-        lift $ f i $ if v then [Click act, Get name] else []
+    i <- ctrl $ vis <&> \v -> if v then [Click act, Get name] else []
     return . Dyn $ Control i <$> (fromMaybe (pure 37) col >>= \c -> vis <&> bool c 35) <*> name
 
 primEntry :: (RefClass r) => RefReader Bool -> r String -> Widget
 primEntry ok r = do
-    i <- ctrl [Put $ writeRef r, Get $ readRef r]
+    i <- ctrl $ pure [Put $ writeRef r, Get $ readRef r]
     return $ Dyn $ Control i <$> (ok <&> bool 42 41) <*> (readRef r <&> \s -> " " ++ s ++ " ")
 
 vertically :: [Widget] -> Widget
@@ -229,8 +220,8 @@ smartButton
     -> EqRef a              -- ^ underlying reference
     -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference. When the button is pressed, the readRef of the reference is modified with this function.
     -> Widget
-smartButton s r f
-    = primButton s Nothing (readRef r >>= changing r . f) (modRef r f)
+smartButton s (EqRef r c) f
+    = primButton s Nothing (readRef r >>= c . f) (modRef r f)
 
 emptyWidget :: Widget
 emptyWidget = horizontally []

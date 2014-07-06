@@ -30,6 +30,7 @@ module Data.LensRef
     , currentValue
     , RegionStatusChange (..)
     , onRegionStatusChange
+    , onRegionStatusChange_
 
     -- * Simple references
     , SimpleRefClass (..)

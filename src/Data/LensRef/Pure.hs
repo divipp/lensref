@@ -44,6 +44,7 @@ module Data.LensRef.Pure
     , currentValue
     , RegionStatusChange (..)
     , onRegionStatusChange
+    , onRegionStatusChange_
     ) where
 
 import Data.Maybe
@@ -91,6 +92,9 @@ data UpdateFunState m = UpdateFunState
     , _dependencies :: (Id m, Ids m)       -- (i, dependencies of i)
     , _updateFun :: RefWriter m ()    -- what to run if at least one of the dependency changes
     }
+
+-- | TODO
+data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 
 -----------------------------------------------
 
@@ -292,6 +296,10 @@ onChangeMemo mr f = do
                 (h2, b') <- getHandler m'
                 return (((== a), ((m',h1,h2), b')), it: memo)
 
+onRegionStatusChange_ :: (Applicative m, Monad m) => (RegionStatusChange -> RefReader m (m ())) -> RefCreator m ()
+onRegionStatusChange_ h
+    = RefCreator $ tell $ MonadMonoid . runRefWriterT . join . readerToWriter . fmap lift . h
+
 onRegionStatusChange :: (Applicative m, Monad m) => (RegionStatusChange -> m ()) -> RefCreator m ()
 onRegionStatusChange h
     = RefCreator $ tell $ MonadMonoid . runRefWriterT . lift . h
@@ -470,13 +478,6 @@ unitRef = Ref buildUnitRefAction
 
 joinRef :: RefReader m (Ref m a) -> Ref m a
 joinRef mr = Ref $ \f -> joinRefAction (mr <&> \r -> runRef r f)
-
-----------------------
-
--- | TODO
-data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
-
-------------------
 
 writeRef :: (Monad m, Applicative m) => Ref m a -> a -> RefWriter m ()
 writeRef (Ref r) = runWriterAction . r . const . Identity

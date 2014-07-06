@@ -31,6 +31,7 @@ module Data.LensRef.Fast
     , newRef
     , RegionStatusChange (..)
     , onRegionStatusChange
+    , onRegionStatusChange_
 
     -- * composed with register
     , memoRead
@@ -356,6 +357,10 @@ onChangeMemo (RefReader mr) f = RefCreator $ \st -> do
 onRegionStatusChange :: SimpleRefClass m => (RegionStatusChange -> m ()) -> RefCreator m ()
 onRegionStatusChange h
     = RefCreator $ \st -> tellHand st h
+
+onRegionStatusChange_ :: SimpleRefClass m => (RegionStatusChange -> RefReader m (m ())) -> RefCreator m ()
+onRegionStatusChange_ h
+    = RefCreator $ \st -> tellHand st $ join . runRefReaderT' st . h
 
 runRefCreator :: SimpleRefClass m => ((forall b . RefWriter m b -> m b) -> RefCreator m a) -> m a
 runRefCreator f = do
