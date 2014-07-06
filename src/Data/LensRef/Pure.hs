@@ -97,7 +97,7 @@ data UpdateFunState m = UpdateFunState
 -- Handlers are added on trigger registration.
 -- The registered triggers may be killed, blocked and unblocked via the handler.
 -- invariant property: in the St state the ... is changed only
-type Handler m = RegionStatusChangeHandler (MonadMonoid (StateT (St m) m))
+type Handler m = RegionStatusChange -> MonadMonoid (StateT (St m) m) ()
 
 -- collecting identifiers of references on whose values the return value depends on
 newtype RefReader (m :: * -> *) a
@@ -292,7 +292,7 @@ onChangeMemo mr f = do
                 (h2, b') <- getHandler m'
                 return (((== a), ((m',h1,h2), b')), it: memo)
 
-onRegionStatusChange :: (Applicative m, Monad m) => RegionStatusChangeHandler m -> RefCreator m ()
+onRegionStatusChange :: (Applicative m, Monad m) => (RegionStatusChange -> m ()) -> RefCreator m ()
 onRegionStatusChange h
     = RefCreator $ tell $ MonadMonoid . runRefWriterT . lift . h
 
@@ -475,9 +475,6 @@ joinRef mr = Ref $ \f -> joinRefAction (mr <&> \r -> runRef r f)
 
 -- | TODO
 data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
-
--- | TODO
-type RegionStatusChangeHandler m = RegionStatusChange -> m ()
 
 ------------------
 

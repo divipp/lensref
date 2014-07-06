@@ -97,6 +97,8 @@ type OrdRef    m a = (Int, SimpleRef m a)
 -- | IORefs with Ord instance
 type OrdRefSet m a = Map.IntMap (SimpleRef m a)
 
+-- | TODO
+data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 
 ------------- data types for computations
 
@@ -116,7 +118,7 @@ newtype RefWriter m a
 
 -- trigger handlers
 -- The registered triggers may be killed, blocked and unblocked via the handler.
-type Handler m = RegionStatusChangeHandler m
+type Handler m = RegionStatusChange -> m ()
 
 type HandT (m :: * -> *) = m
 
@@ -306,6 +308,7 @@ onChangeEq m f = RefCreator $ \st -> do
 
     return $ RefReader $ RefCreator $ \_ -> r <&> snd . snd
 
+onChangeEq_ :: (Eq a, SimpleRefClass m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
 onChangeEq_ m f = RefCreator $ \st -> do
     r <- newReference st (const False, (const $ pure (), error "impossible #3"))
     register st r True $ \it@(p, (h', _)) -> do
@@ -350,6 +353,7 @@ onChangeMemo (RefReader mr) f = RefCreator $ \st -> do
 
     return $ RefReader $ RefCreator $ \_ -> r <&> snd . snd . fst
 
+onRegionStatusChange :: SimpleRefClass m => (RegionStatusChange -> m ()) -> RefCreator m ()
 onRegionStatusChange h
     = RefCreator $ \st -> tellHand st h
 
@@ -374,7 +378,7 @@ runRefReaderT (RefReader x) = x
 {-# INLINE runRefReaderT' #-}
 runRefReaderT' st = flip unRefCreator st . runRefReaderT
 
---tellHand :: (SimpleRefClass m) => Handler m -> m ()
+--tellHand :: SimpleRefClass m => Handler m -> m ()
 tellHand st h = modSimpleRef (_handlercollection st) $ modify $ \f msg -> f msg >> h msg
 
 --getHandler :: SimpleRefClass m => RefCreator m a -> RefCreator m (Handler m, a)
@@ -456,10 +460,13 @@ instance Monad m => Monad (RefReader m) where
 currentValue (RefReaderTPure a) = RefReaderTPure a
 currentValue (RefReader (RefCreator m)) = RefReader $ RefCreator $ \st -> noDependency st $ m st
 
+readRef :: SimpleRefClass m => Ref m a -> RefReader m a
 readRef r = runReaderAction $ runRef r Const
 
+readerToCreator :: SimpleRefClass m => RefReader m a -> RefCreator m a
 readerToCreator = runRefReaderT
 
+readerToWriter :: SimpleRefClass m => RefReader m a -> RefWriter m a
 readerToWriter = RefWriter . runRefReaderT
 
 instance MonadTrans RefWriter where
@@ -482,8 +489,7 @@ type Ref_ m a =
         -> f ()
 
 class ( Functor (RefActionFunctor f)
-      , Applicative (RefActionCreator f)
-      , Monad (RefActionCreator f)
+      , SimpleRefClass (RefActionCreator f)
       )
     => RefAction (f :: * -> *) where
 
@@ -509,7 +515,7 @@ type RefRegOf m a = Bool -> (a -> HandT m a) -> RefCreator m ()
 newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReader m b }
 
 instance
-    ( Applicative m, Monad m
+    ( SimpleRefClass m
     ) => RefAction (ReaderAction b m) where
 
     type RefActionFunctor (ReaderAction b m) = Const b
@@ -525,7 +531,7 @@ instance
 newtype WriterAction m a = WriterAction { runWriterAction :: RefWriter m () }
 
 instance
-    ( Applicative m, Monad m
+    ( SimpleRefClass m
     ) => RefAction (WriterAction m) where
 
     type RefActionFunctor (WriterAction m) = Identity
@@ -573,22 +579,11 @@ joinRef mr = Ref $ \f -> joinRefAction (mr <&> \r -> runRef r f)
 
 ----------------------
 
--- | TODO
-data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
-
--- | TODO
-type RegionStatusChangeHandler m = RegionStatusChange -> m ()
-
-------------------
-
---    id :: RefWriter m a -> m a
-
+writeRef :: SimpleRefClass m => Ref m a -> a -> RefWriter m ()
 writeRef (Ref r) = id . runWriterAction . r . const . Identity
 
+modRef :: SimpleRefClass m => Ref m a -> (a -> a) -> RefWriter m ()
 r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
-
---onChangeEq r f = fmap readRef $ onChangeEq_ r f
-
 
 memoRead :: SimpleRefClass m => RefCreator m a -> RefCreator m (RefCreator m a)
 memoRead g = do
