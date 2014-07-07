@@ -1,13 +1,70 @@
 % Introduction to state-based FRP
 
-Have you ever wondered about applying a lens to an `IORef`?
 
-> lensMap :: Lens' a b -> IORef a -> IORef b
+# Motivation
 
-If this operation makes sense to you, read on to get the full story.
-We will add five operations as interesting as `lensMap` one-by-one.
-At the end we arrive to a fascinating FRP system which I call
-*state-based FRP*. Why did I choose this name? It will turn out at the end.
+## Stream-based FRP
+
+Interactive programs can be described as stream transformers.
+For example, interactive programs with a graphical user interface (GUI) can be described
+as stream transformers with keyboard and mouse events as input streams
+and a continuously changing screen as an output stream:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = LR
+    box [label = "stream\ntransformer", shape = rect]
+    node [style = invis, shape= point]
+    mouse -> box [label="mouse\nevents"]
+    keyboard -> box [label="keyboard\nevents"]
+    box -> screen [label="screen\nstream"]
+}
+~~~~~~~~
+
+The goal of *functional reactive programming* (FRP) is to declaratively describe
+interactive programs. One key aspect of declarative descriptions that they
+are composable. This means that FRP descriptions of interactive
+programs can be composed into FRP descriptions of more complex interactive programs.
+
+One possible composable description of interactive programs are
+stream transformers equipped with different combinators like horizontal and vertical
+composition.
+Let us call these composable descriptions of interactive programs *stream-based FRP*.
+
+Stream-based FRP is a natural FRP description of interactive programs but
+there are other FRP descriptions too.
+
+
+## State-based FRP
+
+Interactive programs with a GUI can be described also by describing the program
+state, describing how mouse and keyboard events alter the program state and
+projecting the program state onto the screen:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = LR
+    box [label = "program\nstate"]
+    node [style = invis, shape= point]
+    box -> box [label="mouse events"]
+    box -> box [label="keyboard events"]
+    box -> screen [label="screen\nprojection"]
+}
+~~~~~~~~
+
+It is not obvious at all to generalize this description to arbitrary
+interactive programs, and to find combinators which make these descriptions
+composable.
+This is the goal of *state based FRP*, a branch of FRP characterized by this goal.
+
+State based FRP is closely related to the state monad and lenses.
+This document tries to give an introduction to state based FRP.
+
+
+
+# ...
+
+...
 
 
 # Applying a lens to a reference
