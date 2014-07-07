@@ -61,72 +61,42 @@ toEqRef r = EqRef r $ \x -> readRef r <&> (/= x)
 
 -----------------
 
-newtype St = St (RefReader [Action] -> RefCreator ControlId)
-
-type ControlId = Int
+newtype St = St (RefReader [Action] -> RefCreator String)
 
 data Action
     = Click (RefWriter ())             -- button and checkbox
     | Put   (String -> RefWriter ())   -- entry
     | Get   (RefReader String)         -- entry and dynamic label
 
+type Widget = RefCreator (RefReader (Int, [String]))
+
 --------------------------------------------------------------------------------
-
-type Widget = RefCreator Layout
-
-data Layout
-    = Label String
-    | Control ControlId Color String
-    | Horiz [Layout]
-    | Vert  [Layout]
-    | Dyn (RefReader Layout)
-    | Keret Layout
 
 type Color = Int
 
-render :: Layout -> RefReader [String]
-render = fmap snd . f
-  where
-    f (Label s) = return (length s, [color 35 s])
-    f (Control i c s) = return (length n + length s, [color 31 n ++ color c s])
-      where n = show i
-    f (Horiz l) = mapM f l <&> foldr horiz (0, [])
-      where
-        horiz (0, _) ys = ys
-        horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
-          where
-            h = max (length xs) (length ys)
-            ext n l = take h $ l ++ repeat (replicate n ' ')
-    f (Vert l) = mapM f l <&> foldr vert (0, [])
-      where
-        vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
-          where
-            k = max n m
-            pad n l = l ++ replicate n ' '
-    f (Dyn m) = m >>= f
-    f (Keret l) = f l <&> \(n, s) -> (n+2, map ("  " ++) $ replicate n ' ' : s)
+color :: Color -> String -> String
+color (-1) s = s
+color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
 
-    color :: Color -> String -> String
-    color (-1) s = s
-    color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
+ctrl :: RefReader [Action] -> RefReader Color -> RefReader String -> Widget
+ctrl acts col name = do
+    St f <- lift ask
+    n <- f acts
+    return $ do
+        c <- col
+        s <- name
+        return (length n + length s, [color 31 n ++ color c s])
 
 --------------------------------------------------------------------------------
 
-ctrl :: RefReader [Action] -> RefCreator ControlId
-ctrl c = do
-    St f <- lift ask
-    f c
-
 label :: String -> Widget
-label = pure . Label
+label s = pure $ pure (length s, [color 35 s])
 
 keret' :: Widget -> Widget
-keret' w = w <&> Keret
+keret' w = w <&> \l -> l <&> \(n, s) -> (n+2, map ("  " ++) $ replicate n ' ' : s)
 
 dynLabel :: RefReader String -> Widget
-dynLabel r = do
-    i <- ctrl $ pure [Get r]
-    return $ Dyn $ Control i 44 <$> (r <&> \s -> " " ++ s ++ " ")
+dynLabel r = ctrl (pure [Get r]) (pure 44) (r <&> \s -> " " ++ s ++ " ")
 
 primButton
     :: RefReader String     -- ^ dynamic label of the button
@@ -134,23 +104,36 @@ primButton
     -> RefReader Bool       -- ^ the button is active when this returns @True@
     -> RefWriter ()        -- ^ the action to do when the button is pressed
     -> Widget
-primButton name col vis act = do
-    i <- ctrl $ vis <&> \v -> if v then [Click act, Get name] else []
-    return . Dyn $ Control i <$> (fromMaybe (pure 37) col >>= \c -> vis <&> bool c 35) <*> name
+primButton name col vis act =
+    ctrl (vis <&> \v -> if v then [Click act, Get name] else [])
+         (fromMaybe (pure 37) col >>= \c -> vis <&> bool c 35)
+         name
 
 primEntry :: (RefClass r) => RefReader Bool -> r String -> Widget
-primEntry ok r = do
-    i <- ctrl $ pure [Put $ writeRef r, Get $ readRef r]
-    return $ Dyn $ Control i <$> (ok <&> bool 42 41) <*> (readRef r <&> \s -> " " ++ s ++ " ")
+primEntry ok r =
+    ctrl (pure [Put $ writeRef r, Get $ readRef r])
+         (ok <&> bool 42 41)
+         (readRef r <&> \s -> " " ++ s ++ " ")
 
 vertically :: [Widget] -> Widget
-vertically ws = sequence ws <&> Vert
+vertically ws = sequence ws <&> \l -> sequence l <&> foldr vert (0, [])
+  where
+    vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
+      where
+        k = max n m
+        pad n l = l ++ replicate n ' '
 
 horizontally :: [Widget] -> Widget
-horizontally ws = sequence ws <&> Horiz
+horizontally ws = sequence ws <&> \l -> sequence l <&> foldr horiz (0, [])
+  where
+    horiz (0, _) ys = ys
+    horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
+      where
+        h = max (length xs) (length ys)
+        ext n l = take h $ l ++ repeat (replicate n ' ')
 
 cell :: Eq a => RefReader a -> (a -> Widget) -> Widget
-cell r f = onChangeMemo r (\v -> f v <&> pure) <&> Dyn
+cell r f = onChangeMemo r (\v -> f v <&> pure) <&> join
 
 runWidget
     :: Maybe ([String] -> Base ())
@@ -170,9 +153,9 @@ runWidget autodraw cw = do
                     f _ = pure []
                 _ <- onChange c $ lift . lift . setControlActions
                 onRegionStatusChange_ $ \msg -> f msg <&> lift . setControlActions
-                return i
+                return $ show i
     rr $ runRefCreator $ \runRefWriter -> do
-        w <- cw <&> render
+        w <- cw <&> fmap snd
 
         maybe (pure ()) (\out -> void $ onChangeEq w $ lift . lift . out) autodraw
 
