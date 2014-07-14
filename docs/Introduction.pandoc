@@ -515,14 +515,15 @@ For example, a Celsius-Fahrenheit converter has two entangled `Double` value ent
 digraph G {
     rankdir = BT
     Edge [arrowtail=inv, dir=both]
+    Node [fontcolor="gray"]
     b1 -> b2 [label="fahrenheitIso"; constraint="false"]
     subgraph cluster_entry1 {
         Graph [label = "entry1", labeljust = "l", labelloc = "b"]
-        b1 [label = "celsius :: Ref m Double"]
+        b1 [label = "celsius ::\nRef m Double"]
     }
     subgraph cluster_entry2 {
         Graph [label = "entry2", labeljust = "l", labelloc = "b"]
-        b2 [label = "fahrenheit :: Ref m Double"]
+        b2 [label = "fahrenheit ::\nRef m Double"]
     }
 }
 ~~~~~~~~
@@ -553,13 +554,14 @@ value by `readRef`):
 ~~~~~~~~ {.dot}
 digraph G {
     rankdir = BT
+    Node [fontcolor="gray"]
     c -> cp [xlabel="(+1)"]
-    cp [label = "c' :: RefReader m Int", style = dashed]
+    cp [label = "c' ::\nRefReader m Int", style = dashed]
     c -> b [dir = back, arrowtail = "vee"]
     b -> cp  [dir = none]
     subgraph cluster_label {
         Graph [label = "label", labeljust = "l", labelloc = "b"]
-        c [label = "c :: Ref m Int"]
+        c [label = "c ::\nRef m Int"]
     }
     subgraph cluster_button {
         Graph [label = "button", labeljust = "l", labelloc = "b"]
@@ -577,20 +579,21 @@ by clicking the checkbox twice.
 digraph G {
     rankdir = BT
     Edge [arrowtail=inv, dir=both]
-//    "main program state" -> "substate :: Maybe Int" [label = "k"]
-    r -> "r :: Ref m (Maybe Int)"  [xlabel = "maybeLens"]
+    Node [fontcolor="gray"]
+//    "main program state" -> "substate ::\nMaybe Int" [label = "k"]
+    r -> "r ::\nRef m (Maybe Int)"  [xlabel = "maybeLens"]
     r -> "checkbox" [label = "_1"]
     r -> entryActive [label = "fst", dir = "forward"]
     r -> entryValue [label = "_2"]
-    r [label = "q :: Ref m (Bool, Int)"]
+    r [label = "q ::\nRef m (Bool, Int)"]
     subgraph cluster_checkbox {
         Graph [label = "checkbox", labeljust = "l", labelloc = "b"]
-        checkbox [label = "value :: Ref m Bool"]
+        checkbox [label = "value ::\nRef m Bool"]
         }
     subgraph cluster_entry {
         Graph [label = "entry", labeljust = "l", labelloc = "b"]
-        entryActive [style = "dashed", label="active :: RefReader m Bool"]
-        entryValue [label = "value :: Ref m Int"]
+        entryActive [style = "dashed", label="active ::\nRefReader m Bool"]
+        entryValue [label = "value ::\nRef m Int"]
     }
 }
 ~~~~~~~~
