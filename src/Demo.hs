@@ -10,7 +10,7 @@ import Data.LensRef
 main :: IO ()
 main = do
     exit <- newEmptyMVar
-    runRefCreator $ \unlift -> do
+    runRefCreator $ \runRefWriter -> do
 
         a <- newRef False
         b <- newRef False
@@ -21,10 +21,9 @@ main = do
             l <- getLine
             case l of
                 "" -> putMVar exit ()
-                "a" -> unlift (modRef a not) >> cycle
-                "b" -> unlift (modRef b not) >> cycle
+                "a" -> runRefWriter (modRef a not) >> cycle
+                "b" -> runRefWriter (modRef b not) >> cycle
                 _ -> putStrLn "wrong input" >> cycle
 
     void $ takeMVar exit
-
 

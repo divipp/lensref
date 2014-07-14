@@ -13,6 +13,7 @@ module Data.LensRef.Test
 import Data.Maybe
 import Control.Applicative
 import Control.Monad
+import Control.Monad.ST
 import Control.Monad.Writer hiding (Any)
 import Control.Arrow ((***))
 import Control.Lens.Simple
@@ -22,7 +23,7 @@ import Data.LensRef
 
 ------------------------------------
 
-type Prog = SimpleRefT (Writer [Maybe (Either String String)])
+type Prog s = WriterT [Maybe (Either String String)] (ST s)
 
 --message :: String -> RefCreator Prog ()
 message = lift . message_
@@ -32,8 +33,8 @@ message_ s = tell [Just $ Right $ "message: " ++ s]
 send x y = lift (tell [Nothing]) >> writeRef x y
 message' s = lift $ tell [Just $ Left $ "message: " ++ s]
 
-runProg :: String -> Prog () -> IO ()
-runProg name = showRes . f [] . snd . runWriter . runSimpleRefT
+runProg :: String -> (forall s . Prog s ()) -> IO ()
+runProg name p = showRes . f [] . snd $ runST $ runWriterT p
   where
     showRes [] = return ()
     showRes xs = fail $ "\ntest " ++ name ++ " failed.\n" ++ unlines xs ++ "\n"
@@ -49,8 +50,8 @@ runProg name = showRes . f [] . snd . runWriter . runSimpleRefT
 runTests :: IO ()
 runTests = do
 
-    let runTest name t = runProg name $ join $ runRefCreator $ \runRefWriter -> do
-            fmap runRefWriter t
+    let runTest :: String -> (forall s . RefCreator (Prog s) (RefWriter (Prog s) ())) -> IO ()
+        runTest name t = runProg name $ join $ runRefCreator $ \runRefWriter -> t <&> runRefWriter
 
         a ==? b = when (a /= b) $ message $ show a ++ " /= " ++ show b
 
@@ -778,6 +779,7 @@ runTests = do
             case b of
                 0 -> return $ pure 0
                 1 -> onChange (readRef r) return
+                _ -> error "impossible"
 
         _ <- onChange (liftM2 (,) (readRef r) (join le)) $ message . show
 
@@ -796,6 +798,7 @@ runTests = do
     runTest "issue3" $ do
         let
             undo (x: xs@(_:_), ys) = (xs, x: ys)
+            undo _ = error "impossible"
 
             undoLens = lens get set where
                 get = head . fst
@@ -831,6 +834,7 @@ runTests = do
             message' "y"
 
     return ()
+
 
 runPerformanceTests :: String -> Int -> IO ()
 runPerformanceTests name n = do
@@ -888,12 +892,12 @@ runPerformanceTests name n = do
 
 maybeLens :: Lens' (Bool, a) (Maybe a)
 maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
-              (\(_,a) x -> maybe (False, a) (\a' -> (True, a')) x)
+              (\(_,a) -> maybe (False, a) (\a' -> (True, a')))
 
 -- | Undo-redo state transformation.
 undoTr
-    :: (SimpleRefClass m) =>
-       (a -> a -> Bool)     -- ^ equality on state
+    :: (RefContext m)
+    => (a -> a -> Bool)     -- ^ equality on state
     -> Ref m a             -- ^ reference of state
     -> RefCreator m ( RefReader m (Maybe (RefWriter m ()))
            , RefReader m (Maybe (RefWriter m ()))

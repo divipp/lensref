@@ -32,8 +32,8 @@ module Data.LensRef
     , onRegionStatusChange
     , onRegionStatusChange_
 
-    -- * Simple references
-    , SimpleRefClass (..)
+    -- * Reference context
+    , RefContext (..)
     , modSimpleRef
     ) where
 

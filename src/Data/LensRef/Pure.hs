@@ -304,7 +304,7 @@ onRegionStatusChange :: (Applicative m, Monad m) => (RegionStatusChange -> m ())
 onRegionStatusChange h
     = RefCreator $ tell $ MonadMonoid . runRefWriterT . lift . h
 
-runRefCreator :: forall m a . SimpleRefClass m => ((forall b . RefWriter m b -> m b) -> RefCreator m a) -> m a
+runRefCreator :: forall m a . RefContext m => ((forall b . RefWriter m b -> m b) -> RefCreator m a) -> m a
 runRefCreator f = do
     r <- newSimpleRef mempty
     let run :: StateT (St m) m b -> m b
@@ -521,4 +521,7 @@ merge (x:xs) (y:ys) = case compare x y of
     LT -> x: merge xs (y:ys)
     GT -> y: merge (x:xs) ys
     EQ -> x: merge xs ys
+
+nextKey :: Map.IntMap a -> Int
+nextKey = maybe 0 ((+1) . fst . fst) . Map.maxViewWithKey
 

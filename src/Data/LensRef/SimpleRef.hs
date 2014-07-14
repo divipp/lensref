@@ -1,22 +1,17 @@
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE GADTs #-}
 module Data.LensRef.SimpleRef where
 
 import Data.IORef
-import qualified Data.IntMap as Map
+import Data.STRef
 import Control.Applicative
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-
-import Unsafe.Coerce
+import Control.Monad.Writer
+import Control.Monad.ST
 
 ----------------
 
-class (Monad m, Applicative m) => SimpleRefClass m where
+class (Monad m, Applicative m) => RefContext m where
 
     -- simple reference
     type SimpleRef m :: * -> *
@@ -25,7 +20,7 @@ class (Monad m, Applicative m) => SimpleRefClass m where
     readSimpleRef  :: SimpleRef m a -> m a
     writeSimpleRef :: SimpleRef m a -> a -> m ()
 
-modSimpleRef :: SimpleRefClass m => SimpleRef m a -> StateT a m b -> m b
+modSimpleRef :: RefContext m => SimpleRef m a -> StateT a m b -> m b
 modSimpleRef r s = do
     a <- readSimpleRef r
     (x, a') <- runStateT s a
@@ -34,7 +29,7 @@ modSimpleRef r s = do
 
 -------------------
 
-instance SimpleRefClass IO where
+instance RefContext IO where
     type SimpleRef IO = IORef
 
 --    {-# INLINE newSimpleRef #-}
@@ -44,41 +39,21 @@ instance SimpleRefClass IO where
 --    {-# INLINE writeSimpleRef #-}
     writeSimpleRef r a = writeIORef r a
 
--------------------
+instance RefContext (ST s) where
+    type SimpleRef (ST s) = STRef s
+    newSimpleRef = newSTRef
+    readSimpleRef = readSTRef
+    writeSimpleRef = writeSTRef
 
-instance SimpleRefClass m => SimpleRefClass (ReaderT r m) where
+instance RefContext m => RefContext (ReaderT r m) where
     type SimpleRef (ReaderT r m) = SimpleRef m
     newSimpleRef = lift . newSimpleRef
     readSimpleRef = lift . readSimpleRef
     writeSimpleRef r = lift . writeSimpleRef r
 
--------------------
-
--- TODO: wrap in newtype
-type SimpleRefT = StateT (Map.IntMap Any)
-
-nextKey :: Map.IntMap a -> Int
-nextKey = maybe 0 ((+1) . fst . fst) . Map.maxViewWithKey
-
-data Any where Any :: a -> Any
-
-newtype RefSimpleRefT a = RefSimpleRefT Int
-
-instance (Monad m, Functor m) => SimpleRefClass (SimpleRefT m) where
-    type SimpleRef (SimpleRefT m) = RefSimpleRefT 
-    newSimpleRef a = do
-        i <- gets nextKey
-        let r = RefSimpleRefT i
-        writeSimpleRef r a
-        return r
-
-    readSimpleRef (RefSimpleRefT i) = gets $ unsafeGetAny . (Map.! i)
-      where
-        unsafeGetAny :: Any -> a
-        unsafeGetAny (Any a) = unsafeCoerce a
-
-    writeSimpleRef (RefSimpleRefT i) a = modify $ Map.insert i (Any a)
-
-runSimpleRefT :: Monad m => SimpleRefT m a -> m a
-runSimpleRefT = flip evalStateT Map.empty
+instance (RefContext m, Monoid w) => RefContext (WriterT w m) where
+    type SimpleRef (WriterT w m) = SimpleRef m
+    newSimpleRef = lift . newSimpleRef
+    readSimpleRef = lift . readSimpleRef
+    writeSimpleRef r = lift . writeSimpleRef r
 
