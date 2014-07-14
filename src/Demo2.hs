@@ -71,29 +71,28 @@ color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
 
 --------------------------------------------------------------------------------
 
-newtype WContext s m a
-    = WContext { runWContext :: ReaderT (NewCtrl (WContext s m)) m a }
+newtype WContext m a
+    = WContext { runWContext :: ReaderT (NewCtrl (WContext m)) m a }
         deriving (Functor, Applicative, Monad)
 
-instance MonadTrans (WContext s) where
+instance MonadTrans WContext where
     lift = WContext . lift
 
-instance RefContext m => RefContext (WContext s m) where
-    type SimpleRef (WContext s m) = SimpleRef m
+instance RefContext m => RefContext (WContext m) where
+    type SimpleRef (WContext m) = SimpleRef m
     newSimpleRef = lift . newSimpleRef
     readSimpleRef = lift . readSimpleRef
     writeSimpleRef r = lift . writeSimpleRef r
 
-instance RefContext m => WidgetContext (WContext s m) where
+instance RefContext m => WidgetContext (WContext m) where
     registerControl acts col name = do
         f <- lift $ WContext ask
         f acts col name
 
 runWidget
-    :: forall s m
-    .  RefContext m
+    :: forall m . RefContext m
     => Maybe ([String] -> m ())
-    -> Widget (WContext s m)
+    -> Widget (WContext m)
     -> m (Int -> m (), Int -> String -> m (), Int -> m String, m [String])
 runWidget autodraw cw = do
     controlmap <- newSimpleRef mempty
@@ -120,14 +119,14 @@ runWidget autodraw cw = do
 
         maybe (pure ()) (\out -> void $ onChangeEq w $ lift . lift . out) autodraw
 
-        let runRefWriter :: RefWriter (WContext s m) b -> m b
+        let runRefWriter :: RefWriter (WContext m) b -> m b
             runRefWriter = flip runReaderT registerControl . runWContext . runRefWriter_
 
             click cs = fromMaybe (fail "not a button or checkbox") $ listToMaybe [runRefWriter act | Click act <- cs]
             put cs s = fromMaybe (fail "not an entry")             $ listToMaybe [runRefWriter $ act s | Put act <- cs]
             get cs   = fromMaybe (fail "not an entry or label")    $ listToMaybe [runRefWriter $ readerToWriter act | Get act <- cs]
 
-            lookup_ :: Int -> m [Action (WContext s m)]
+            lookup_ :: Int -> m [Action (WContext m)]
             lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
 
             draw = runRefWriter $ readerToWriter w
