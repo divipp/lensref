@@ -23,20 +23,21 @@ digraph G {
 ~~~~~~~~
 
 The goal of *functional reactive programming* (FRP) is to declaratively describe
-interactive programs. One key aspect of declarative descriptions that they
-are composable. This means that FRP descriptions of interactive
+interactive programs. Declarative descriptions are composable which
+means that FRP descriptions of interactive
 programs can be decomposed into FRP descriptions of simpler interactive programs.
 
-One possible composable description of interactive programs are
-stream transformers equipped with different combinators like horizontal and vertical
-composition.
-Let us call this system *stream-based FRP*.
+Most declarative descriptions of interactive programs is built around
+event streams and stream transformers equipped with different
+combinators like horizontal and vertical composition.
+Let us call these systems *stream-based FRP* systems.
 
 
 ## State-based FRP
 
-Stream-based FRP is not the only possible declarative description of interactive programs with a GUI.
-Another possibility is to describe the program state,
+Stream-based FRP is not the only possible way to declaratively describe interactive programs.
+
+In case of interactive programs with a GUI it is possible to describe the program state,
 to describe how mouse and keyboard events alter the program state and
 to project the program state onto the screen:
 
@@ -52,19 +53,16 @@ digraph G {
 }
 ~~~~~~~~
 
-It is not obvious to generalize this description to arbitrary
-interactive programs, and to decompose this description into simpler parts.
+It is not obvious to generalize this scheme to arbitrary
+interactive programs, and to decompose it into simpler similar parts.
 Let us call *state-based FRP* a system characterized by this goal.
 
-State-based FRP is an alternative to stream-based FRP.
+State-based FRP is an alternative to stream-based FRP systems.
 In many cases, state-based FRP decomposition of interactive programs is simpler
 than their stream-based FRP decomposition.
 
 This document gives an introduction to state-based FRP as implemented
 in the `lensref` package[^lensref].
-The interface of `lensref` is built around the reference data type.
-We start with an interface of basic reference operations and we
-add new operations step-by-step to the interface.
 
 [^lensref]: [http://hackage.haskell.org/package/lensref](http://hackage.haskell.org/package/lensref)
 
@@ -72,19 +70,22 @@ add new operations step-by-step to the interface.
 
 # Basic operations on references
 
+The interface of `lensref` is built around the reference data type.
+This section defines an interface of basic reference operations. We
+add new operations step-by-step to this interface in the following sections.
+
 ## The reference data type
 
 A *reference* is an editable view of the program state.
 
-A reference has an associated *value* for each program state.
-
-A reference has also a *context*. The context tells
+Each reference has a *context*. The context tells
 what kind of effects may happen during reference write, for example.
 It also helps to distinguish references created in different regions.
 Not every reference context is valid; the `RefContext` type class classifies
 valid reference contexts:
 
-> class Monad m => RefContext m    -- reference contexts
+> -- reference contexts
+> class Monad m => RefContext m
 >
 > instance RefContext IO
 > instance RefContext (ST s)
@@ -92,11 +93,12 @@ valid reference contexts:
 > instance (RefContext m, Monoid w) => RefContext (WriterT w m)
 > ...
 
+A reference has an associated *value* for each program state.
 
+The type of a reference is determined by the type of its context and the type of its values:
 
-The type of a reference is determined by its context type and the type of its possible values:
-
-> data RefContext m => Ref m a   -- abstract data type of references
+> -- abstract data type of references
+> data RefContext m => Ref m a
 
 ## Interface of the basic operations
 
@@ -138,7 +140,7 @@ it does not define how reference writing changes the values of other references.
 We leave this question open for now.
 
 Reference reader, writer and creator computations are abstract data types with `Functor`, `Applicative` and `Monad` instances
-(`Functor` and `Applicative` instances was left implicit for brevity).
+(declaration of `Functor` and `Applicative` instances was left implicit for brevity).
 `RefWriter` and `RefCreator` are monad transformers. `RefReader` is
 not a monad transformer because no side effect is allowed during reference reading.
 
@@ -241,23 +243,66 @@ return ()
 Law 4 is similar to law 2 but stated for the `RefCreator` monad instead of `RefReader`
 and with and extra condition for the reference context.
 
-Note that there is no law similar to law 3 for `RefCreator`, because `RefCreator` is not idempotent.
+Note unlike `RefReader`, `RefCreator` is not idempotent.
 For example, `(liftM2 (,) (newRef 14) (newRef 14))` and
-`(liftM (\a -> (a, a)) (newRef 14))` has different behaviour because
+`(liftM (\a -> (a, a)) (newRef 14))` has different behaviour since
 the former creates two distinct references whilst the latter creates two entangled references.
 
 
 ## Running `RefCreator`
+
+`lensref` exposes the following function:
 
 > runRefCreator
 >     :: RefContext m
 >     => ((forall b . RefWriter m b -> m b) -> RefCreator m a)
 >     -> m a
 
+`runRefCreator` turns a `(RefCreator m a)` computation into an `(m a)` computation.
+During the creation of the `(RefCreator m a)` value it is allowed
+to turn any `(RefWriter m b)` computation into an `(m a)` computation.
+
+### Safety of `runRefCreator`
+
+This subsection is a note for the curious.
+
+`runRefCreator` is an unsafe function, it is possible to implement a restricted form of
+`unsafeCoerce` with it, for example.
+`lensref` exposes `runRefCreator` because of the following reasons:
+
+-   There is a trade-off between the safety of `runRefCreator` and the complexity of its interface.
+-   There are two easy rules to follow to keep the current `runRefCreator` safe:
+    -   Call `runRefCreator` only once in your program.
+        `lensref` is designed such that one call of `runRefCreator` is enough in most use cases.
+    -   Use `runRefCreator` in a single-threaded environment.
+-   A thread-safe variant and/or a
+    multiple-call-safe variant of `runRefCreator` can be defined in terms of the current
+    `runRefCreator` function. See ... TODO
+
+
 ## Examples
 
+For basic usage examples we use a specialized form of `runRefCreator`:
 
-TODO
+> runRefTest :: (forall s . RefCreator (ST s) (RefWriter (ST s) a)) -> a
+> runRefTest m
+>     = runST $ join $ runRefCreator $ \runRW -> m <&> runRW
+
+Note that `runRefTest` is a safe function (unlike `runRefCreator`).
+
+> -- readTest == 3
+> readTest = runRefTest $ do
+>     r <- newRef (3 :: Int)
+>     return $ readerToWriter (readRef r)
+
+> -- writeTest == 4
+> writeTest = runRefTest $ do
+>     r <- newRef (3 :: Int)
+>     return $ do
+>         writeRef r 4
+>         readerToWriter (readRef r)
+
+Nothing special so far.
 
 
 # References connected by lenses
@@ -516,7 +561,7 @@ digraph G {
     rankdir = BT
     Edge [arrowtail=inv, dir=both]
     Node [fontcolor="gray"]
-    b1 -> b2 [label="fahrenheitIso"; constraint="false"]
+    b1 -> b2 [label="celsiusToFahrenheit"; constraint="false"]
     subgraph cluster_entry1 {
         Graph [label = "entry1", labeljust = "l", labelloc = "b"]
         b1 [label = "celsius ::\nRef m Double"]
@@ -528,7 +573,10 @@ digraph G {
 }
 ~~~~~~~~
 
-Note that the diagram contains superfluous information to improve readability.
+> celsiusToFahrenheit :: Iso' Double Double
+> celsiusToFahrenheit = multiplying 1.8 . adding 32
+
+Gray color marks parts which can be stripped without loosing runtime information about the program.
 The following stripped diagram contains just enough information to describe the same interactive
 program:
 
@@ -536,7 +584,7 @@ program:
 digraph G {
     rankdir = BT
     Edge [arrowtail=inv, dir=both]
-    b1 -> b2 [label="fahrenheitIso"; constraint="false"]
+    b1 -> b2 [label="celsiusToFahrenheit"; constraint="false"]
     subgraph cluster_entry1 {
         Graph [label = "entry1", labeljust = "l", labelloc = "b"]
         b1 [label = ""]
