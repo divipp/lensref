@@ -1,6 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Demo2 where
@@ -16,36 +15,7 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Lens.Simple
 
-import Data.LensRef hiding (readRef, writeRef, lensMap, modRef, joinRef)
-import qualified Data.LensRef as Ref
-
---------------------------------------------------------------------------------
-
-class RefClass r where
-    toRef    :: RefContext s => r s a -> Ref s a
-    lensMap  :: RefContext s => Lens' a b -> r s a -> r s b
-    joinRef  :: RefContext s => RefReader s (r s a) -> r s a
-
-infixr 8 `lensMap`
-
-readRef  = Ref.readRef  . toRef
-writeRef = Ref.writeRef . toRef
-modRef   = Ref.modRef   . toRef
-
-instance RefClass Ref where
-    toRef   = id
-    lensMap = Ref.lensMap
-    joinRef = Ref.joinRef
-
-data EqRef s a = EqRef (Ref s a) (a -> RefReader s Bool)
-
-instance RefClass EqRef where
-    toRef (EqRef r _) = r
-    lensMap k (EqRef r c) = EqRef (lensMap k r) $ \b -> readRef r >>= c . set k b
-    joinRef m = EqRef (joinRef $ m <&> toRef) $ \a -> m >>= \(EqRef _ c) -> c a
-
-toEqRef :: (Eq a, RefContext s) => Ref s a -> EqRef s a
-toEqRef r = EqRef r $ \x -> readRef r <&> (/= x)
+import Data.LensRef.EqRef
 
 --------------------------------------------------------------------------------
 
@@ -213,8 +183,8 @@ smartButton
     -> EqRef s a              -- ^ underlying reference
     -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference. When the button is pressed, the readRef of the reference is modified with this function.
     -> Widget s
-smartButton s (EqRef r c) f
-    = primButton s Nothing (readRef r >>= c . f) (modRef r f)
+smartButton s r f
+    = primButton s Nothing (readRef r >>= changing r . f) (modRef r f)
 
 emptyWidget :: WidgetContext s => Widget s
 emptyWidget = horizontally []
@@ -253,10 +223,10 @@ demo = do
 intListEditor
     :: forall s
     .  WidgetContext s
-    => (Integer, Bool)            -- ^ default element
-    -> Int                  -- ^ maximum number of elements
-    -> Ref s [(Integer, Bool)]    -- ^ state reference
-    -> Ref s Bool           -- ^ settings reference
+    => (Integer, Bool)          -- ^ default element
+    -> Int                      -- ^ maximum number of elements
+    -> Ref s [(Integer, Bool)]  -- ^ state reference
+    -> Ref s Bool               -- ^ settings reference
     -> Widget s
 intListEditor def maxi list_ range = do
     (undo, redo)  <- undoTr ((==) `on` map fst) list_
@@ -355,7 +325,7 @@ listLens = lens get set where
 -- | Undo-redo state transformation.
 undoTr
     :: RefContext s
-    => (a -> a -> Bool)     -- ^ equality on state
+    => (a -> a -> Bool)    -- ^ equality on state
     -> Ref s a             -- ^ reference of state
     -> RefCreator s
            ( RefReader s (Maybe (RefWriter s ()))
