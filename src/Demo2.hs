@@ -2,8 +2,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Demo2 where
 
@@ -51,17 +49,17 @@ toEqRef r = EqRef r $ \x -> readRef r <&> (/= x)
 
 --------------------------------------------------------------------------------
 
+type Widget s = RefCreator s (RefReader s (Int, [String]))
+
+class RefContext s => WidgetContext s where
+    registerControl :: NewCtrl s
+
+type NewCtrl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> Widget s
+
 data Action s
     = Click (RefWriter s ())             -- button and checkbox
     | Put   (String -> RefWriter s ())   -- entry
     | Get   (RefReader s String)         -- entry and dynamic label
-
-type Widget s = RefCreator s (RefReader s (Int, [String]))
-
-type NewCtrl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> Widget s
-
-class RefContext s => WidgetContext s where
-    registerControl :: NewCtrl s
 
 --------------------------------------------------------------------------------
 
@@ -99,10 +97,10 @@ runWidget
     -> m (Int -> m (), Int -> String -> m (), Int -> m String, m [String])
 runWidget autodraw cw = do
     controlmap <- newSimpleRef mempty
-    counter <- newSimpleRef 0
+    controlcounter <- newSimpleRef 0
 
     let registerControl acts col name = do
-            i <- lift $ modSimpleRef counter $ state $ \c -> (c, succ c)
+            i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
             let setControlActions cs = modSimpleRef controlmap $ modify $ case cs of
                     [] -> Map.delete i
                     _ -> Map.insert i cs
@@ -381,21 +379,4 @@ undoLens eq = lens get set where
     set (x' : xs, ys) x | eq x x' = (x: xs, ys)
     set (xs, _) x = (x : xs, [])
 
-{-
---notebook :: RefCreator s m Widget s
-notebook_ = runWidget $ do
-    buttons <- newRef ("",[])
-    let h i b = horizontally
-           [ label $ pure b
-           , button (pure "Del") $ pure $ Just $ modRef (_2 `lensMap` buttons) $ \l -> take i l ++ drop (i+1) l
-           ]
-        set (a,xs) x
-            | a /= x = ("",x:xs)
-            | otherwise = (a,xs)
-    vertically
-        [ entry $ lens fst set `lensMap` buttons
-        , cell (fmap snd $ readRef buttons) $ vertically . zipWith h [0..]    -- cellNoMemo
-        ]
-
--}
 
