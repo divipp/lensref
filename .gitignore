@@ -1,4 +1,7 @@
 *~
+docs/*.dot
+docs/*.fdp
+docs/*.pdf
 *.hi
 *.o
 dist

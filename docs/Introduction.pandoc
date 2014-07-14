@@ -1,4 +1,5 @@
 % Introduction to state-based FRP
+% *Draft*
 
 
 # Motivation
@@ -12,7 +13,7 @@ and a continuously changing screen as an output stream:
 
 ~~~~~~~~ {.dot}
 digraph G {
-    rankdir = LR
+    rankdir = BT
     box [label = "stream\ntransformer", shape = rect]
     node [style = invis, shape= point]
     mouse -> box [label="mouse\nevents"]
@@ -24,77 +25,681 @@ digraph G {
 The goal of *functional reactive programming* (FRP) is to declaratively describe
 interactive programs. One key aspect of declarative descriptions that they
 are composable. This means that FRP descriptions of interactive
-programs can be composed into FRP descriptions of more complex interactive programs.
+programs can be decomposed into FRP descriptions of simpler interactive programs.
 
 One possible composable description of interactive programs are
 stream transformers equipped with different combinators like horizontal and vertical
 composition.
-Let us call these composable descriptions of interactive programs *stream-based FRP*.
-
-Stream-based FRP is a natural FRP description of interactive programs but
-there are other FRP descriptions too.
+Let us call this system *stream-based FRP*.
 
 
 ## State-based FRP
 
-Interactive programs with a GUI can be described also by describing the program
-state, describing how mouse and keyboard events alter the program state and
-projecting the program state onto the screen:
+Stream-based FRP is not the only possible declarative description of interactive programs with a GUI.
+Another possibility is to describe the program state,
+to describe how mouse and keyboard events alter the program state and
+to project the program state onto the screen:
 
 ~~~~~~~~ {.dot}
 digraph G {
-    rankdir = LR
-    box [label = "program\nstate"]
+    rankdir = BT
+    box [label = "program\nstate", shape=ellipse]
+    screen [label = "screen", style = "dashed"]
     node [style = invis, shape= point]
-    box -> box [label="mouse events"]
-    box -> box [label="keyboard events"]
-    box -> screen [label="screen\nprojection"]
+    box -> box [label=""]
+    box -> box [label="mouse events\nkeyboard events"]
+    box -> screen [label="projection"]
 }
 ~~~~~~~~
 
-It is not obvious at all to generalize this description to arbitrary
-interactive programs, and to find combinators which make these descriptions
-composable.
-This is the goal of *state based FRP*, a branch of FRP characterized by this goal.
+It is not obvious to generalize this description to arbitrary
+interactive programs, and to decompose this description into simpler parts.
+Let us call *state-based FRP* a system characterized by this goal.
 
-State based FRP is closely related to the state monad and lenses.
-This document tries to give an introduction to state based FRP.
+State-based FRP is an alternative to stream-based FRP.
+In many cases, state-based FRP decomposition of interactive programs is simpler
+than their stream-based FRP decomposition.
+
+This document gives an introduction to state-based FRP as implemented
+in the `lensref` package[^lensref].
+The interface of `lensref` is built around the reference data type.
+We start with an interface of basic reference operations and we
+add new operations step-by-step to the interface.
+
+[^lensref]: [http://hackage.haskell.org/package/lensref](http://hackage.haskell.org/package/lensref)
 
 
 
-# ...
+# Basic operations on references
 
-...
+## The reference data type
+
+A *reference* is an editable view of the program state.
+
+A reference has an associated *value* for each program state.
+
+A reference has also a *context*. The context tells
+what kind of effects may happen during reference write, for example.
+It also helps to distinguish references created in different regions.
+Not every reference context is valid; the `RefContext` type class classifies
+valid reference contexts:
+
+> class Monad m => RefContext m    -- reference contexts
+>
+> instance RefContext IO
+> instance RefContext (ST s)
+> instance RefContext m => RefContext (ReaderT r m)
+> instance (RefContext m, Monoid w) => RefContext (WriterT w m)
+> ...
 
 
-# Applying a lens to a reference
 
-## Lenses
+The type of a reference is determined by its context type and the type of its possible values:
 
-First I would like to clarify that we use Edward Kmett's lens notations.
-However, we need just a tiny fraction of the `lens` library.
-The needed definitions in a simplified form are the following:
+> data RefContext m => Ref m a   -- abstract data type of references
 
-> type Lens' a b = (a -> b, a -> b -> a)
+## Interface of the basic operations
 
-> set :: Lens' a b -> a -> b -> a
-> set = snd
+The basic reference operations are *reference reading*,
+*reference writing* and *reference creation*.
+The interface of the basic reference operations is the following:
 
+> -- reference read action
+> readRef  :: RefContext m =>  Ref m a -> RefReader m a
+> -- reference write action
+> writeRef :: RefContext m =>  Ref m a -> a -> RefWriter m ()
+> -- new reference creation action
+> newRef   :: RefContext m =>  a -> RefCreator m (Ref m a)
+>
+> data RefReader  m a  -- reference reader computation
+> data RefWriter  m a  -- reference writer computation
+> data RefCreator m a  -- reference creator computation
+>
+> instance RefContext m => Monad (RefReader m)
+> instance RefContext m => Monad (RefWriter m)
+> instance RefContext m => Monad (RefCreator m)
+>
+> instance MonadTrans RefWriter
+> instance MonadTrans RefCreator
+>
+> readerToWriter  :: RefContext m => RefReader m a -> RefWriter  m a
+> readerToCreator :: RefContext m => RefReader m a -> RefCreator m a
+
+Reference reading returns the value of a reference for any program state.
+Given a reference `(r :: Ref m a)` and a value `(x :: a)`,
+reference writing changes the program state such that the value of `r` in
+the changed state will be `x`.[^write]
+Given a value `(x :: a)`, new reference creation extends the program state with
+a new `a`-typed field initialized with `x`
+and returns a reference whose value is always the value of the new field in the program state.
+
+[^write]: This is an incomplete definition of reference writing because
+it does not define how reference writing changes the values of other references.
+We leave this question open for now.
+
+Reference reader, writer and creator computations are abstract data types with `Functor`, `Applicative` and `Monad` instances
+(`Functor` and `Applicative` instances was left implicit for brevity).
+`RefWriter` and `RefCreator` are monad transformers. `RefReader` is
+not a monad transformer because no side effect is allowed during reference reading.
+
+Reference writer and creator computations may involve reference reader computations:
+`readerToWriter` lifts reference reader computations to reference writer computations;
+`readerToCreator` lifts reference reader computations to reference creator computations.
+
+The distinction between `RefReader`, `RefWriter` and `RefCeator` is necessary
+for operations introduced later.
+
+
+## Laws
+
+The following laws are part of the interface.
+
+### Law 1: write-read
+
+Let `(r :: Ref m a)` be a reference and `(x :: a)` a value.
+Reading `r` after writing `x` into it returns `x`, i.e.
+the following expressions have the same behaviour:[^behaviour]
+
+~~~~~ {.haskell}
+writeRef r x >> readerToWriter (readRef r)
+    ~       -- write-read
+writeRef r x >> return x
+~~~~~
+
+[^behaviour]: We say that two expressions has the same behaviour if they are
+replaceable in any context without changing the functional properties of the program
+(difference in resource usage is possible).
+
+The write-read law is analogue to the set-get law for lenses.
+The following laws which are analogue to the get-set and set-set lens laws are **not required** in the `lensref` library.
+
+The read-write law is **not required**:
+
+~~~~~ {.haskell}
+readRef r >>= writeRef r
+    ~       -- read-write
+return ()
+~~~~~
+
+The write-write law is **not required**:
+
+~~~~~ {.haskell}
+writeRef r x' >> writeRef r x
+    ~       -- write-write
+writeRef r x
+~~~~~
+
+
+### Law 2: `RefReader` has no side effects
+
+Let `(m :: RefReader m a)`. `m` has no side effects, i.e.
+the following expressions have the same behaviour:
+
+~~~~~ {.haskell}
+m >> return ()
+    ~       -- RefReader-no-side-effect
+return ()
+~~~~~
+
+
+### Law 3: `RefReader` is idempotent
+
+Let `(m :: RefReader m a)`. Multiple execution of `m` is the same as one execution of `m`, i.e.
+the following expressions have the same behaviour:
+
+~~~~~ {.haskell}
+liftM2 (,) m m
+    ~       -- RefReader-idempotent
+liftM (\a -> (a, a)) m
+~~~~~
+
+Laws 2 and 3 together implies that `RefReader` has no effects,
+i.e. it is isomorphic to the `Reader` monad.[^indep]
+
+[^indep]: [http://stackoverflow.com/questions/16123588/what-is-this-special-functor-structure-called](http://stackoverflow.com/questions/16123588/what-is-this-special-functor-structure-called)
+
+
+### Law 4: `RefCreator` has no extra side effects
+
+Let `(c :: RefCreator m a)`. `c` has no side effects if `m` has no side effects, i.e.
+if
+
+~~~~~ {.haskell}
+m >> return ()
+    ~
+return ()
+~~~~~
+
+holds for all `(m :: m)` then
+
+~~~~~ {.haskell}
+c >> return ()
+    ~       -- RefCreator-no-side-effect
+return ()
+~~~~~
+
+Law 4 is similar to law 2 but stated for the `RefCreator` monad instead of `RefReader`
+and with and extra condition for the reference context.
+
+Note that there is no law similar to law 3 for `RefCreator`, because `RefCreator` is not idempotent.
+For example, `(liftM2 (,) (newRef 14) (newRef 14))` and
+`(liftM (\a -> (a, a)) (newRef 14))` has different behaviour because
+the former creates two distinct references whilst the latter creates two entangled references.
+
+
+## Running `RefCreator`
+
+> runRefCreator
+>     :: RefContext m
+>     => ((forall b . RefWriter m b -> m b) -> RefCreator m a)
+>     -> m a
+
+## Examples
+
+
+TODO
+
+
+# References connected by lenses
+
+## Lenses summary
+
+We use Edward Kmett's lens notation.
+The needed definitions from the `lens` package are the following:
+
+> -- data type for lenses (simplified form)
+> type Lens' a b
+>
+> -- lens construction with get+set parts
+> lens :: (a -> b) -> (a -> b -> a) -> Lens' a b
+>
+> -- the get part of a lens, arguments flipped
 > (^.) :: a -> Lens' a b -> b
-> (^.) = flip fst
-
+>
+> -- the set part of a lens, arguments flipped
+> set :: Lens' a b -> b -> a -> a
+>
+> -- data type for isomorphisms (simplified form)
+> type Iso' a b
+>
+> -- iso construction with to+from parts
+> iso :: (a -> b) -> (b -> a) -> Iso' a b
+>
+> -- lens from anything to unit
 > united :: Lens' a ()
-> united = (const (), const)
-
+>
+> -- ad-hoc polymorphic tuple element lenses
 > _1 :: Lens' (x, y) x
-> _1 = (fst, \(_, y) x -> (x, y))
-
+> _1 :: Lens' (x, y, z) x
+> _1 :: ...
 > _2 :: Lens' (x, y) y
-> _2 = (snd, \(x, _) y -> (x, y))
-
+> _2 :: Lens' (x, y, z) y
+> _2 :: ...
+> _3 :: Lens' (x, y, z) z
+> _3 :: Lens' (x, y, z, v) z
+> _3 :: ...
+> ...
+>
+> -- function composition can be used for lens composition
 > (.) :: Lens' a b -> Lens' b c -> Lens' a c
-> -- I cheat here, see [?] to understand why function
-> -- composition can be used for lens compostion
+>
+> -- conversion from isomorphisms to lenses is implicit
+> id :: Iso' a b -> Lens' a b
+>
+> -- id is the identity isomorphism (and a lens too)
+> id :: Iso' a a
+
+Utility functions used:
+
+> -- flipped fmap
+> <&> :: Functor f => f a -> (a -> b) -> f b
+
+
+### Use of improper lenses
+
+Let `(k :: Lens' A B)`, `(a :: A)`, `(b :: B)` and `(b' :: B)`.
+Edward Kmett's three common sense lens laws are the following:
+
+~~~~~ {.haskell}
+set k b a ^. k        ==  b            -- set-get
+set k (a ^. k) a      ==  a            -- get-set
+set k b (set k b' a)  ==  set k b a    -- set-set
+~~~~~
+
+The `lensref` library can deal with lenses which do not satisfy the
+get-set or the set-set laws.
+`lensref` calls these lenses improper lenses and uses the same `Lens'` type
+for them.
+
+
+## Lens connections
+
+Let `(a :: Ref m A)` and `(b :: Ref m B)`.
+We say that `a` and `b` are connected by `(k :: Lens' A B)` iff
+the following holds:
+
+-   ~~~~~ {.haskell}
+    readRef b
+        ~       -- lensMap-read
+    readRef a <&> (^. k)
+    ~~~~~
+
+-   For all `(y :: B)`
+
+    ~~~~~ {.haskell}
+    writeRef b y
+        ~       -- lensMap-write
+    readerToWriter (readRef a) >>= writeRef a . flip (set k) y
+    ~~~~~
+
+
+## The `Ref` category
+
+Lens connection is a transitive relation, and
+every reference is connected to itself by the `id` lens,
+so references as objects and lens connections as morphisms form a category.
+Let us call this category `Ref`.
+
+Some properties of the `Ref` category:
+
+-   Terminal object: `(r :: Ref m ())`
+-   The program state is an initial object. It can not be typed in Haskell because
+    new reference creation changes the type of the program state.
+-   Pullbacks up to isomorphism?
+
+
+# Reference diagrams
+
+
+## References
+
+Ellipses denote references.
+The following diagram shows two independent references:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    a [label = "a :: Ref m Bool"]
+    b [label = "b :: Ref m Char"]
+}
+~~~~~~~~
+
+
+## Lens connection
+
+An arrow with and inverted arrow tail denotes a lens connection between references:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    a [label = "a :: Ref m A"]
+    b [label = "b :: Ref m B"]
+    a -> b [arrowtail=inv, dir=both, label="k :: Lens' A B"]
+}
+~~~~~~~~
+
+The layout of the nodes is not significant, but it tries to reflect
+the information dependency between them. Usually the value of node
+`b` is determined by the value of node `a` if there is an undirected path
+between them and `b` is not below `a`.
+
+Connection by an isomorphism between references is a special case of connection by lenses.
+For better information dependency visualization, in case of connection by an isomorphism the references will be shown
+at the same level:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    a [label = "a :: Ref m A"]
+    b [label = "b :: Ref m B"]
+    a -> b [arrowtail=inv, dir=both, label="k :: Iso' A B", constraint="false"]
+}
+~~~~~~~~
+
+## `RefReader` computations
+
+Dashed ellipses denote reference reader computations.
+Arrows between reference reader computations denote functors in the `RefReader` category:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Node [style = dashed]
+    a [label = "a :: RefReader m Bool"]
+    b [label = "b :: RefReader m Bool"]
+    a -> b [label="not :: Bool -> Bool"]
+}
+~~~~~~~~
+
+The special `readRef` arrow connects `(r :: Ref m a)` to `(readRef r :: RefReader m a)`:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    r [label = "r :: Ref m Bool"]
+    Node [style = dashed]
+    a [label = "readRef r :: RefReader m Bool"]
+    b [label = "b :: RefReader m Bool"]
+    a -> b [label="not :: Bool -> Bool"]
+    r -> a [label="readRef"]
+}
+~~~~~~~~
+
+`readRef` may be left implicit, so the previous diagram can be simplified like this:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    r [label = "r :: Ref m Bool"]
+    Node [style = dashed]
+    b [label = "b :: RefReader m Bool"]
+    r -> b [label="not :: Bool -> Bool"]
+}
+~~~~~~~~
+
+
+## `RefWriter` computations
+
+Recall the type of `writeRef`:
+
+> writeRef :: Ref m a -> a -> WriteRef m ()
+
+`writeRef` can be generalized such that the written value is "dynamic", i.e. it is
+a `RefReader` value:
+
+> writeRefDyn :: Ref m a -> RefReader m a -> RefWriter m ()
+> writeRefDyn r m = readerToWriter m >>= writeRef r
+
+`writeRefDyn` alone is enough to construct the needed `RefWriter` computations in many cases.
+`writeRefDyn` is denoted by an arrow from the `RefReader` computation to the reference:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    w -> a [dir = none]
+    r -> w [dir = back, arrowtail = "vee"]
+    a [label = "a :: RefReader m Int", style = dashed]
+    w [margin=0, shape = point, width=0.1, height=0.1, fillcolor = white, xlabel = "writeRefDyn r a"]
+    r [label = "r :: Ref m Int"]
+}
+~~~~~~~~
+
+
+## Widget decorations
+
+Groups of `Ref`, `RefReader` and `RefWriter` values can
+be connected to GUI widgets.[^widgets]
+This connections may be shown as decorations on reference diagrams.
+
+[^widgets]: See the `lgtk` library which is based on `lensref`.
+
+Some possible connetions are the following:
+
+-   `(RefReader m String)` computations can be connected to dynamic labels.
+    The label shows the actual return value of the computation.
+-   `(Ref m Bool)` values can be connected to checkboxes.
+    Iff the value of the reference is `True`, the checkbox is checked.
+    Note that this describes a two-way connection between the checkbox and the program
+    state (changing the program state may alter the checkbox and vice-versa).
+-   References with basic types like `Int`, `Double` or `String` can be connected to entries.
+-   `(RefWriter m ())` computations can be connected to buttons.
+    When the button is pressed, the computation is executed.
+-   `(RefReader m Bool)` computations can be attached to checkboxes, entries or buttons.
+    The widgets are dynamically activated or deactivated whenever the computation returns `True` or `False`, respectively.
+-   `(RefReader m String)` computations can be attached to buttons.
+    The return value of the computation is shown as a dynamically changing button label.
+
+For example, a Celsius-Fahrenheit converter has two entangled `Double` value entries:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Edge [arrowtail=inv, dir=both]
+    b1 -> b2 [label="fahrenheitIso"; constraint="false"]
+    subgraph cluster_entry1 {
+        Graph [label = "entry1", labeljust = "l", labelloc = "b"]
+        b1 [label = "celsius :: Ref m Double"]
+    }
+    subgraph cluster_entry2 {
+        Graph [label = "entry2", labeljust = "l", labelloc = "b"]
+        b2 [label = "fahrenheit :: Ref m Double"]
+    }
+}
+~~~~~~~~
+
+Note that the diagram contains superfluous information to improve readability.
+The following stripped diagram contains just enough information to describe the same interactive
+program:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Edge [arrowtail=inv, dir=both]
+    b1 -> b2 [label="fahrenheitIso"; constraint="false"]
+    subgraph cluster_entry1 {
+        Graph [label = "entry1", labeljust = "l", labelloc = "b"]
+        b1 [label = ""]
+    }
+    subgraph cluster_entry2 {
+        Graph [label = "entry2", labeljust = "l", labelloc = "b"]
+        b2 [label = ""]
+    }
+}
+~~~~~~~~
+
+A simple counter has an integer label and a button (here the reference `c` was converted implicitly to a `RefReader`
+value by `readRef`):
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    c -> cp [xlabel="(+1)"]
+    cp [label = "c' :: RefReader m Int", style = dashed]
+    c -> b [dir = back, arrowtail = "vee"]
+    b -> cp  [dir = none]
+    subgraph cluster_label {
+        Graph [label = "label", labeljust = "l", labelloc = "b"]
+        c [label = "c :: Ref m Int"]
+    }
+    subgraph cluster_button {
+        Graph [label = "button", labeljust = "l", labelloc = "b"]
+        b [margin=0, shape = point, width=0.1, height=0.1, fillcolor = white]
+    }
+}
+~~~~~~~~
+
+In a bit more complex example a `(Maybe Int)` value editor is shown.
+Note that the primary reference is here `r`; the reference `q` is needed
+to remember the entry value when the user deactivates and re-activates the entry
+by clicking the checkbox twice.
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Edge [arrowtail=inv, dir=both]
+//    "main program state" -> "substate :: Maybe Int" [label = "k"]
+    r -> "r :: Ref m (Maybe Int)"  [xlabel = "maybeLens"]
+    r -> "checkbox" [label = "_1"]
+    r -> entryActive [label = "fst", dir = "forward"]
+    r -> entryValue [label = "_2"]
+    r [label = "q :: Ref m (Bool, Int)"]
+    subgraph cluster_checkbox {
+        Graph [label = "checkbox", labeljust = "l", labelloc = "b"]
+        checkbox [label = "value :: Ref m Bool"]
+        }
+    subgraph cluster_entry {
+        Graph [label = "entry", labeljust = "l", labelloc = "b"]
+        entryActive [style = "dashed", label="active :: RefReader m Bool"]
+        entryValue [label = "value :: Ref m Int"]
+    }
+}
+~~~~~~~~
+
+> -- improper lens: set-set law is violated
+> maybeLens :: Lens' (Bool, a) (Maybe a)
+> maybeLens = lens get set
+>   where
+>     get (True, a) = Just a
+>     get _ = Nothing
+>     set (_, a) = maybe (False, a) ((,) True)
+
+The same diagram stripped:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Edge [arrowtail=inv, dir=both]
+    r -> ""  [xlabel = "maybeLens"]
+    r -> "checkbox" [label = "_1"]
+    r -> entryActive [label = "fst", dir = "forward"]
+    r -> entryValue [label = "_2"]
+    r [label = ""]
+    subgraph cluster_checkbox {
+        Graph [label = "checkbox", labeljust = "l", labelloc = "b"]
+        checkbox [label = ""]
+        }
+    subgraph cluster_entry {
+        Graph [label = "entry", labeljust = "l", labelloc = "b"]
+        entryActive [style = "dashed", label=""]
+        entryValue [label = ""]
+    }
+}
+~~~~~~~~
+
+
+# Reference-network creation
+
+Arbitrary tree-shaped reference-network can be created with the following
+two operations:
+
+> -- forward lens-application
+> lensMap :: Lens' a b -> Ref m a -> Ref m b
+>
+> -- backward lens-application (reference extension)
+> extendRef :: Ref m b -> Lens' a b -> a -> RefCreator m (Ref m a)
+
+Let `(k :: Lens' a b)` and `(r :: Ref m a)`.
+Then `r` and `(lensMap k r)` are references connected by `k`.
+
+Let `(q :: Ref m b)`, `(k :: Lens' a b)` and `(x :: a)`.
+Let `(r :: Ref m a)` the return value of `(extendRef q k x)`.
+Let *s* the program state before the creation of `r` and *s'* the program
+state after the creation of `r`.
+Then the following hold:
+
+-   `r` and `q` are connected by `k`.
+-   All references have the same value in *s'* as in *s* (with the exception of `r`
+    whose value is not defined in *s*).
+-   The value of `r` in *s'* is `(set k y x)` where `y` is the value
+    of `q` in *s* (or in *s'*). Note that this is the most meaningful value
+    for `r` such that the previous two statements hold.
+
+Note that `extendRef` is needed for the creation of reference-networks like the
+following:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    a1 [label = "a1 :: Ref m (Bool, Int)"]
+    a2 [label = "a2 :: Ref m (Bool, Int)"]
+    b [label = "b :: Ref m (Maybe Int)"]
+    a1 -> b [arrowtail=inv, dir=both, label="maybeLens"]
+    a2 -> b [arrowtail=inv, dir=both, label="maybeLens"]
+}
+~~~~~~~~
+
+`extendRef` is called reference extension because the result reference
+may contain more information than the original reference.
+For example, considering the previous diagram,
+`a1` and `a2` may have different
+values in some program states, so they are not completely entangled
+and their values are not determined by the value of `b`.
+
+
+
+# Tracking changes in the reference-network
+
+## Motivation
+
+
+## Semantics
+
+- currentValue
+- instance Monad RefReader
+
+
+# Dynamic networks
+
+- RefReader m (Ref m a)
+- onChange
+- joinRef
+
+# Resource handling
+
+- onRegionStatusChange
+
+
+# Old stuff
 
 ## How to apply a lens to an `IORef`?
 
@@ -235,25 +840,6 @@ first and `r` was defined by
 In this sense `extRef` is the inverse of `lensMap` and this is why I call it backward
 lens application.
 
-~~~~~~~~ {.dot}
-digraph G {
-    rankdir = BT
-    node [shape = none]
-    r -> "r'" [label = "_1"]
-}
-~~~~~~~~
-
-~~~~~~~~ {.dot}
-digraph G {
-    rankdir = BT
-    node [shape = none]
-    "p :: BigState" -> "..."
-    "..." -> "q :: Maybe Int"
-    "r :: (Bool, Int)" -> "q :: Maybe Int"  [label = "maybeLens"]
-    "r :: (Bool, Int)" -> "checkbox :: Bool" [label = "_1"]
-    "r :: (Bool, Int)" -> "entry :: Int" [label = "_2"]
-}
-~~~~~~~~
 
 
 ## Implementation of `extRef`
@@ -408,6 +994,55 @@ yampa
 iTask
 
 TODO
+
+
+## Extra diagrams
+
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Edge [arrowtail=inv, dir=both]
+    A -> C [label = "k"]
+    B -> C [label = "l"]
+    Edge [style = dashed]
+    D [style = dashed]
+    D -> A [label = "k'"]
+    D -> B [label = "l'"]
+    A [label = "a :: A"]
+    B [label = "b :: B"]
+    C [label = "c :: C"]
+    D [label = "d :: D"]
+}
+~~~~~~~~
+
+
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Edge [arrowtail=inv, dir=both]
+    a -> b
+    b -> c
+    d -> b
+    d -> e
+}
+~~~~~~~~
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    Edge [arrowtail=inv, dir=both]
+    Edge [style = dashed]
+    x [style = dashed]
+    x -> a
+    x -> b
+    x -> c
+    x -> d
+    x -> e
+    x [label = "program state"]
+}
+~~~~~~~~
 
 
 

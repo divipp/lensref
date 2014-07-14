@@ -20,17 +20,21 @@ import System.Exit
 -- ~~~
 
 transform :: Block -> IO Block
-transform (CodeBlock (id, classes, namevals) contents) | "dot" `elem` classes = do
+transform (CodeBlock (id, classes, namevals) contents) | "dot" `elem` classes = tr "dot" id namevals contents 
+transform (CodeBlock (id, classes, namevals) contents) | "fdp" `elem` classes = tr "fdp" id namevals contents 
+transform x = return x
+
+tr dot id namevals contents = do
     let (name, name', file) = case lookup "name" namevals of
             Just fn   -> ([Str fn], fn, fn)
             Nothing   -> ([], "", uniqueName contents)
-        infile  = file ++ ".dot"
+        infile  = file ++ "." ++ dot
         outfile = file ++ ".pdf"
         size = maybe [] ((:[]) . ("-Gsize="++)) $ lookup "size" namevals
         margin = maybe []  ((:[]) . ("-Gmargin="++)) $ lookup "margin" namevals
     writeFile infile contents
     (Just inh, Just outh, Just errh, ph) <- createProcess
-        (proc "dot" $ ["-Tpdf"] ++ margin ++ size)
+        (proc dot $ ["-Tpdf"] ++ margin ++ size)
             { std_in  = CreatePipe
             , std_out = CreatePipe
             , std_err = CreatePipe
@@ -49,7 +53,6 @@ transform (CodeBlock (id, classes, namevals) contents) | "dot" `elem` classes = 
     hPutStr outh' result
     hClose outh'
     return $ Para [Image name (outfile, name')]
-transform x = return x
 
 -- | Generate a unique filename given the file's contents.
 uniqueName :: String -> String
