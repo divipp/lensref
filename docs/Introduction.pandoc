@@ -178,7 +178,7 @@ The following laws which are analogue to the get-set and set-set lens laws are *
 The read-write law is **not required**:
 
 ~~~~~ {.haskell}
-readRef r >>= writeRef r
+readerToWriter (readRef r) >>= writeRef r
     ~       -- read-write
 return ()
 ~~~~~
@@ -247,6 +247,11 @@ Note unlike `RefReader`, `RefCreator` is not idempotent.
 For example, `(liftM2 (,) (newRef 14) (newRef 14))` and
 `(liftM (\a -> (a, a)) (newRef 14))` has different behaviour since
 the former creates two distinct references whilst the latter creates two entangled references.
+
+## Derived construct: `modRef`
+
+> modRef :: RefContext m => Ref m a -> (a -> a) -> RefWriter m ()
+> modRef r f = readerToWriter (readRef r) >>= writeRef r . f
 
 
 ## Running `RefCreator`
@@ -377,28 +382,44 @@ get-set or the set-set laws.
 for them.
 
 
-## Lens connections
+## Lens application
 
-Let `(a :: Ref m A)` and `(b :: Ref m B)`.
-We say that `a` and `b` are connected by `(k :: Lens' A B)` iff
-the following holds:
+We add lens application to the interface:
+
+> -- lens-application
+> lensMap :: Lens' a b -> Ref m a -> Ref m b
+
+### Semantics of lens application
+
+Let `(r :: Ref m a)` and `(k :: Lens' a b)`.
+`(lensMap k r)` is characterized by the following laws:
 
 -   ~~~~~ {.haskell}
-    readRef b
+    readRef (lensMap k r)
         ~       -- lensMap-read
-    readRef a <&> (^. k)
+    readRef r <&> (^. k)
     ~~~~~
 
 -   For all `(y :: B)`
 
     ~~~~~ {.haskell}
-    writeRef b y
+    writeRef (lensMap k r) y
         ~       -- lensMap-write
-    readerToWriter (readRef a) >>= writeRef a . flip (set k) y
+    modRef r (flip (set k) y)
     ~~~~~
 
 
 ## The `Ref` category
+
+Let `(a :: Ref m A)` and `(b :: Ref m B)`.
+We say that `a` and `b` are connected by `(k :: Lens' A B)` iff
+the following holds:
+
+~~~~~ {.haskell}
+b
+    ~
+lensMap r a
+~~~~~
 
 Lens connection is a transitive relation, and
 every reference is connected to itself by the `id` lens,
@@ -683,7 +704,7 @@ digraph G {
 Arbitrary tree-shaped reference-network can be created with the following
 two operations:
 
-> -- forward lens-application
+> -- lens-application
 > lensMap :: Lens' a b -> Ref m a -> Ref m b
 >
 > -- backward lens-application (reference extension)
