@@ -11,7 +11,7 @@ For example, interactive programs with a graphical user interface (GUI) can be d
 as stream transformers with keyboard and mouse events as input streams
 and a continuously changing screen as an output stream:
 
-~~~~~~~~ {.dot}
+~~~~~~~~ {.dot size=2}
 digraph G {
     rankdir = BT
     box [label = "stream\ntransformer", shape = rect]
@@ -41,7 +41,7 @@ In case of interactive programs with a GUI it is possible to describe the progra
 to describe how mouse and keyboard events alter the program state and
 to project the program state onto the screen:
 
-~~~~~~~~ {.dot}
+~~~~~~~~ {.dot size=2}
 digraph G {
     rankdir = BT
     box [label = "program\nstate", shape=ellipse]
@@ -248,10 +248,21 @@ For example, `(liftM2 (,) (newRef 14) (newRef 14))` and
 `(liftM (\a -> (a, a)) (newRef 14))` has different behaviour since
 the former creates two distinct references whilst the latter creates two entangled references.
 
-## Derived construct: `modRef`
+## Derived constructs: `writeRefDyn`, `modRef`
+
+`writeRef` can be generalized such that the written value is
+a `RefReader` value:
+
+> writeRefDyn :: Ref m a -> RefReader m a -> RefWriter m ()
+> writeRefDyn r m = readerToWriter m >>= writeRef r
+
+`writeRefDyn` alone is enough to construct the needed `RefWriter` computations in many cases.
+
+Another derived construct, `modRef` can be expressed in terms of `writeRefDyn`:
 
 > modRef :: RefContext m => Ref m a -> (a -> a) -> RefWriter m ()
-> modRef r f = readerToWriter (readRef r) >>= writeRef r . f
+> modRef r f = writeRefDyn r $ fmap f $ readRef r
+
 
 
 ## Running `RefCreator`
@@ -646,18 +657,7 @@ Data flow functions are the following:
 -   `writeRefDyn` (see later)
 
 
-### Layout rule
-
-Layout of view-nodes is significant.
-The layout rule is the following:
-
-Let `r` and `q` be views.
-If there is a non-decreasing undirected path
-from `a` to `b` through red arrows
-then `a` determines `b`.
-
-
-### Lens connection
+### Arrow styles
 
 Arrows representing lens application have
 an inverted arrow tail to reflect bidirectional data flow between references:
@@ -673,51 +673,6 @@ digraph G {
 }
 ~~~~~~~~
 
-Because of the layout rule, in case of lens-connection by an isomorphism the references may be shown
-at the same level to reflect that they determine each-other:
-
-~~~~~~~~ {.dot size=2.5}
-digraph G {
-    rankdir = BT
-    a [label = "Ref m A"]
-    b [label = "Ref m B"]
-    Edge [color=red]
-    Edge [dir = both, arrowtail=inv]
-    a -> b [label="lensMap (k :: Iso' A B)", constraint="false"]
-}
-~~~~~~~~
-
-### `RefReader` computations
-
-The layout rule applies for `RefReader` computations too.
-An example:
-
-~~~~~~~~ {.dot size=2.5}
-digraph G {
-    rankdir = BT
-    Edge [color=red]
-    a [label = "Ref m Int"]
-    Node [margin=0, shape = none, width=0, height=0]
-    a -> readRef [constraint = false]
-    readRef -> "fmap abs"
-    "fmap abs" -> "fmap negate" [constraint = false]
-    {rank=same; "fmap abs"; "fmap negate"}
-}
-~~~~~~~~
-
-### `RefWriter` computations
-
-Recall the type of `writeRef`:
-
-> writeRef :: Ref m a -> a -> WriteRef m ()
-
-`writeRef` can be generalized such that the written value is
-a `RefReader` value:
-
-> writeRefDyn :: Ref m a -> RefReader m a -> RefWriter m ()
-> writeRefDyn r m = readerToWriter m >>= writeRef r
-
-`writeRefDyn` alone is enough to construct the needed `RefWriter` computations in many cases.
 The arrow of first argument of `writeRefDyn` is drawn
 *backwards* and dotted to reflect that
 value of the reference is updated occasionally:
@@ -736,6 +691,48 @@ digraph G {
 ~~~~~~~~
 
 `writeRefDyn` may be seen as an occasional connection between views.
+
+
+### Layout rule
+
+Layout of view-nodes is significant.
+The layout rule is the following:
+
+Let `r` and `q` be views.
+If there is a non-decreasing undirected path
+from `a` to `b` through red arrows
+then `a` determines `b`.
+
+Because of the layout rule, in case of lens-connection by an isomorphism the references may be shown
+at the same level to reflect that they determine each-other:
+
+~~~~~~~~ {.dot size=2.5}
+digraph G {
+    rankdir = BT
+    a [label = "Ref m A"]
+    b [label = "Ref m B"]
+    Edge [color=red]
+    Edge [dir = both, arrowtail=inv]
+    a -> b [label="lensMap (k :: Iso' A B)", constraint="false"]
+}
+~~~~~~~~
+
+The layout rule applies to `RefReader` computations too.
+An example:
+
+~~~~~~~~ {.dot size=2.5}
+digraph G {
+    rankdir = BT
+    Edge [color=red]
+    a [label = "Ref m Int"]
+    Node [margin=0, shape = none, width=0, height=0]
+    a -> readRef [constraint = false]
+    readRef -> "fmap abs"
+    "fmap abs" -> "fmap negate" [constraint = false]
+    {rank=same; "fmap abs"; "fmap negate"}
+}
+~~~~~~~~
+
 
 
 ## Examples
@@ -795,6 +792,7 @@ value by `readRef`):
 digraph G {
     Graph [labeljust = "l", labelloc = "b", fontcolor=gray, pencolor = gray]
     rankdir = BT
+    Edge [color=red]
     c [label = "Ref m Int"]
     Node [margin=0, shape = none, width=0, height=0]
     c -> cv [constraint=false]
@@ -824,6 +822,7 @@ by clicking the checkbox twice.
 ~~~~~~~~ {.dot size=4}
 digraph G {
     Graph [labeljust = "l", labelloc = "t", fontcolor=gray, pencolor = gray]
+    Edge [color=red]
     label="maybeeditor"
     rankdir = BT
 //    "main program state" -> "substate ::\nMaybe Int" [label = "k"]
@@ -891,9 +890,10 @@ Then the following hold:
 Note that `extendRef` is needed for the creation of reference-networks like the
 following:
 
-~~~~~~~~ {.dot}
+~~~~~~~~ {.dot size=2.5}
 digraph G {
     rankdir = BT
+    Edge [color=red]
     Edge [dir = both, arrowtail=inv]
     a1 [label = "Ref m (Bool, Int)"]
     a2 [label = "Ref m (Bool, Int)"]
