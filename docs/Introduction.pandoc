@@ -434,7 +434,42 @@ Let `(r :: Ref m a)` and `(k :: Lens' a b)`.
     modRef r (flip (set k) y)
     ~~~~~
 
-## Examples
+### Examples
+
+TODO
+
+
+## Reference extension
+
+Let `(k :: Lens' a b)` and `(q :: Ref m b)`.
+*Reference extension*, or *backward lens application*, helps to
+create a reference `(r :: Ref m a)` such that `q ~ lensMap k r`:
+
+> -- lens-application
+> lensMap :: Lens' a b -> Ref m a -> Ref m b
+>
+> -- backward lens application (reference extension)
+> extendRef :: Ref m b -> Lens' a b -> a -> RefCreator m (Ref m a)
+
+### Semantics of reference extension
+
+Let `(q :: Ref m b)`, `(k :: Lens' a b)` and `(x :: a)`.
+Let `(r :: Ref m a)` the return value of `(extendRef q k x)`.
+Let *s* the program state before the creation of `r` and *s'* the program
+state after the creation of `r`.
+Then the following hold:
+
+-   `q ~ lensMap k r`
+-   All references with the exception of `r` have the same value in *s'* as in *s*.
+-   The value of `r` (in *s'*) is `(set k y x)` where `y` is the value
+    of `q` (in *s* or in *s'*). Note that this is the most meaningful value
+    for `r` such that the previous two statements hold.
+
+`extendRef` is called reference extension because the invocation
+of `extendRef` extends the program state or the reference state if
+we think of references as substates of the program state.
+
+### Examples
 
 TODO
 
@@ -458,6 +493,10 @@ Some properties of the `Ref` category:
 -   Pullbacks up to isomorphism?
 
 
+# Diagrams
+
+We draw reference diagrams to visualize different type of connections between views of the program state.
+
 ## Views of the program state
 
 Any `RefReader` computation has an associated value for each program state, its
@@ -470,10 +509,8 @@ program state i.e. a *read-only reference*.
 Non-editable views (`RefReader` computations) and editable views
 (references) of the program state are called *views*.
 
-We say that the view `v` determines the view `w` iff there is a function
+We say that the view `v` depends on the view `w` iff there is a function
 which maps the value of `v` to the value of `w` for any program state.
-
-We draw *reference diagrams* to visualize different type of connections between views of the program state.
 
 
 ## `Hask` diagrams
@@ -701,10 +738,10 @@ The layout rule is the following:
 Let `r` and `q` be views.
 If there is a non-decreasing undirected path
 from `a` to `b` through red arrows
-then `a` determines `b`.
+then `b` depends on `a`.
 
 Because of the layout rule, in case of lens-connection by an isomorphism the references may be shown
-at the same level to reflect that they determine each-other:
+at the same level to reflect that they depend on each-other:
 
 ~~~~~~~~ {.dot size=2.5}
 digraph G {
@@ -860,55 +897,6 @@ digraph G {
 
 
 
-# Reference-network creation
-
-Arbitrary tree-shaped reference-network can be created with the following
-two operations:
-
-> -- lens-application
-> lensMap :: Lens' a b -> Ref m a -> Ref m b
->
-> -- backward lens-application (reference extension)
-> extendRef :: Ref m b -> Lens' a b -> a -> RefCreator m (Ref m a)
-
-Let `(k :: Lens' a b)` and `(r :: Ref m a)`.
-Then `r` and `(lensMap k r)` are references connected by `k`.
-
-Let `(q :: Ref m b)`, `(k :: Lens' a b)` and `(x :: a)`.
-Let `(r :: Ref m a)` the return value of `(extendRef q k x)`.
-Let *s* the program state before the creation of `r` and *s'* the program
-state after the creation of `r`.
-Then the following hold:
-
--   `r` and `q` are connected by `k`.
--   All references have the same value in *s'* as in *s* (with the exception of `r`
-    whose value is not defined in *s*).
--   The value of `r` in *s'* is `(set k y x)` where `y` is the value
-    of `q` in *s* (or in *s'*). Note that this is the most meaningful value
-    for `r` such that the previous two statements hold.
-
-Note that `extendRef` is needed for the creation of reference-networks like the
-following:
-
-~~~~~~~~ {.dot size=2.5}
-digraph G {
-    rankdir = BT
-    Edge [color=red]
-    Edge [dir = both, arrowtail=inv]
-    a1 [label = "Ref m (Bool, Int)"]
-    a2 [label = "Ref m (Bool, Int)"]
-    b [label = "Ref m (Maybe Int)"]
-    a1 -> b [label="lensMap\nmaybeLens"]
-    a2 -> b [label="lensMap\nmaybeLens"]
-}
-~~~~~~~~
-
-`extendRef` is called reference extension because the result reference
-may contain more information than the original reference
-(the value of the result reference is not determined by the value of
-the original reference).
-
-
 
 # Tracking changes in the reference-network
 
@@ -1058,7 +1046,7 @@ a `Bool` value. We can do it with the following definition:
 > do
 >     (r' :: IORef' (Int, Bool)) <- extRef r _1 (0, False)
 
-The third parameter of `extRef` determines the initial value of `r'`. If
+The third parameter of `extRef` is needed to find an initial value of `r'`. If
 the value of `r` is `15` at the creation time of `r'` then the initial
 value of `r'` is `(15, False)`.
 
