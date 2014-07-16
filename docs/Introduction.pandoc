@@ -45,7 +45,7 @@ to project the program state onto the screen:
 digraph G {
     rankdir = BT
     box [label = "program\nstate", shape=ellipse]
-    screen [label = "screen", style = "dashed"]
+    screen [label = "screen"]
     node [style = invis, shape= point]
     box -> box [label=""]
     box -> box [label="mouse events\nkeyboard events"]
@@ -408,6 +408,9 @@ Let `(r :: Ref m a)` and `(k :: Lens' a b)`.
     modRef r (flip (set k) y)
     ~~~~~
 
+## Examples
+
+
 
 ## The `Ref` category
 
@@ -436,130 +439,224 @@ Some properties of the `Ref` category:
 
 # Reference diagrams
 
+## `Hask` diagrams
 
-## References
+We will draw diagrams in the `Hask` category.
 
-Ellipses denote references.
-The following diagram shows two independent references:
+In `Hask` types are objects and functions are arrows.
 
-~~~~~~~~ {.dot}
-digraph G {
-    rankdir = BT
-    a [label = "a :: Ref m Bool"]
-    b [label = "b :: Ref m Char"]
-}
-~~~~~~~~
+### Motivation
 
+Why are `Hask` diagrams useful (compared to source code)?
 
-## Lens connection
+-   Variable names are not needed.
+-   Diagrams may show constraints, see the following diagrams.
+-   The diagram may contain additional information.
+    In the next section we decorate `Hask` diagrams to reflect
+    information flow and GUI widget bindings, for example.
 
-An arrow with and inverted arrow tail denotes a lens connection between references:
-
-~~~~~~~~ {.dot}
-digraph G {
-    rankdir = BT
-    a [label = "a :: Ref m A"]
-    b [label = "b :: Ref m B"]
-    a -> b [arrowtail=inv, dir=both, label="k :: Lens' A B"]
-}
-~~~~~~~~
-
-The layout of the nodes is not significant, but it tries to reflect
-the information dependency between them. Usually the value of node
-`b` is determined by the value of node `a` if there is an undirected path
-between them and `b` is not below `a`.
-
-Connection by an isomorphism between references is a special case of connection by lenses.
-For better information dependency visualization, in case of connection by an isomorphism the references will be shown
-at the same level:
+Constraints shown in diagrams:
 
 ~~~~~~~~ {.dot}
 digraph G {
     rankdir = BT
-    a [label = "a :: Ref m A"]
-    b [label = "b :: Ref m B"]
-    a -> b [arrowtail=inv, dir=both, label="k :: Iso' A B", constraint="false"]
+    x [label = "Integer"]
+    y [label = "Integer"]
+    x -> y [label="f", constraint=false]
+    y -> x [label="g", constraint=false]
 }
 ~~~~~~~~
 
-## `RefReader` computations
+The diagram shows two `Integer`-typed variables in scope. Let us call them
+`x` and `y`. The corresponding source code may be `{y = f x}` or `{x = g y}`
+but both of them lacks a constraint shown on the diagram.
 
-Dashed ellipses denote reference reader computations.
-Arrows between reference reader computations denote functors in the `RefReader` category:
+Another example:
 
 ~~~~~~~~ {.dot}
 digraph G {
     rankdir = BT
-    Node [style = dashed]
-    a [label = "a :: RefReader m Bool"]
-    b [label = "b :: RefReader m Bool"]
-    a -> b [label="not :: Bool -> Bool"]
+    x [label = "Integer"]
+    y [label = "Integer"]
+    a [label = "Integer"]
+    x -> a [label = "abs"]
+    y -> a [label = "abs"]
 }
 ~~~~~~~~
 
-The special `readRef` arrow connects `(r :: Ref m a)` to `(readRef r :: RefReader m a)`:
+The diagram shows three `Integer`-typed variables in scope.
+Let us call them `a`, `x` and `y` from up to down and left to right.
+The diagram shows that `a ~ (abs x) ~ (abs y)` (the expressions have
+the same behaviour) which cannot be expressed with source code.
+
+### N-ary functions in diagrams
+
+Usually n-ary functions are presented in uncurried form with a product domain:
 
 ~~~~~~~~ {.dot}
 digraph G {
     rankdir = BT
-    r [label = "r :: Ref m Bool"]
-    Node [style = dashed]
-    a [label = "readRef r :: RefReader m Bool"]
-    b [label = "b :: RefReader m Bool"]
-    a -> b [label="not :: Bool -> Bool"]
-    r -> a [label="readRef"]
+    x [label = "Integer"]
+    y [label = "Integer"]
+    xy [label = "(Integer, Integer)"]
+    a [label = "Bool"]
+    b [label = "Bool"]
+    xy -> x [label = "fst", constraint=false]
+    xy -> y [label = "snd", constraint=false]
+    xy -> a [label = "uncurry (==)"]
+    a -> b [label = "not"]
 }
 ~~~~~~~~
 
-`readRef` may be left implicit, so the previous diagram can be simplified like this:
+Instead of this we present n-ary functions with different kind of nodes,
+so we have type nodes and function nodes in the diagram.
+The direct predecessors of function nodes are the function arguments. 
+The order of arguments matter so the input arrows of function nodes are numbered.
+The previous diagram in this presentation:
 
 ~~~~~~~~ {.dot}
 digraph G {
     rankdir = BT
-    r [label = "r :: Ref m Bool"]
-    Node [style = dashed]
-    b [label = "b :: RefReader m Bool"]
-    r -> b [label="not :: Bool -> Bool"]
+    x [label = "Integer"]
+    y [label = "Integer"]
+    a [label = "Bool"]
+    b [label = "Bool"]
+    Node [margin=0, shape = none, width=0, height=0]
+    x -> "==" [label = "1"]
+    y -> "==" [label = "2"]
+    "==" -> a
+    a -> not [label = "1"]
+    not -> b
 }
 ~~~~~~~~
 
+### Simplifications
 
-## `RefWriter` computations
+We use several simplification to make the diagrams smaller:
+
+-   A unary function may be presented as an arrow.
+-   The label of a type node may be hidden if it is inferable.
+-   A type node with a hidden label and with one input arrow may be hidden.
+-   The numbering of the input arrows of function nodes may be hidden if it is inferable or the ordering does not matter.
+
+The previous diagram with some of the simplifications applied:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    x [label = "Integer"]
+    y [label = "Integer"]
+    r [label = ""]
+    Node [margin=0, shape = none, width=0, height=0]
+    x -> "=="
+    y -> "=="
+    "==" -> r [label = "not"]
+}
+~~~~~~~~
+
+## Reference-diagrams
+
+We decorate `Hask` diagrams to reflect
+information flow and GUI widget bindings.
+
+There will be three different kind of decorations applied:
+
+-   Edge style may not be plain in case of some special functions.
+-   Layout of nodes may be significant.
+-   Nodes may be clustered.
+
+### Lens connection
+
+Arrows representing `(lensMap _)` functions have
+an inverted arrow tail to reflect bidirectional information flow between references:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    a [label = "Ref m a"]
+    b [label = "Ref m b"]
+    Edge [dir = both, arrowtail=inv]
+    a -> b [label="lensMap (k :: Lens' a b)"]
+}
+~~~~~~~~
+
+Moreover, the layout of the nodes is significant.
+The rule is the following:
+
+Let `r` and `q` be references or reference reader computations.
+If there is an undirected path
+between `ä` and `b` through references and reference reader computations, and `b` is not below `a`,
+then the value of `b` is determined by the value of `a` for any program state.
+
+For example, in case of a lens-connection by an isomorphism the references may be shown
+at the same level to reflect that their values are determined by each-other:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    a [label = "Ref m A"]
+    b [label = "Ref m B"]
+    Edge [dir = both, arrowtail=inv]
+    a -> b [label="lensMap (k :: Iso' A B)", constraint="false"]
+}
+~~~~~~~~
+
+### `RefReader` computations
+
+The layout rule applies for `RefReader` computations too.
+An example:
+
+~~~~~~~~ {.dot}
+digraph G {
+    rankdir = BT
+    a [label = "Ref m Int"]
+    Node [margin=0, shape = none, width=0, height=0]
+    a -> readRef [constraint = false]
+    readRef -> "fmap abs"
+    "fmap abs" -> "fmap negate" [constraint = false]
+    {rank=same; "fmap abs"; "fmap negate"}
+}
+~~~~~~~~
+
+### `RefWriter` computations
 
 Recall the type of `writeRef`:
 
 > writeRef :: Ref m a -> a -> WriteRef m ()
 
-`writeRef` can be generalized such that the written value is "dynamic", i.e. it is
+`writeRef` can be generalized such that the written value is
 a `RefReader` value:
 
 > writeRefDyn :: Ref m a -> RefReader m a -> RefWriter m ()
 > writeRefDyn r m = readerToWriter m >>= writeRef r
 
 `writeRefDyn` alone is enough to construct the needed `RefWriter` computations in many cases.
-`writeRefDyn` is denoted by an arrow from the `RefReader` computation to the reference:
+The arrow of first argument of `writeRefDyn` is drawn
+*backwards* and dotted to reflect that
+value of the reference is updated occasionally:
 
 ~~~~~~~~ {.dot}
 digraph G {
     rankdir = BT
-    w -> a [dir = none]
-    r -> w [dir = back, arrowtail = "vee"]
-    a [label = "a :: RefReader m Int", style = dashed]
-    w [margin=0, shape = point, width=0.1, height=0.1, fillcolor = white, xlabel = "writeRefDyn r a"]
-    r [label = "r :: Ref m Int"]
+    r [label = "Ref m a"]
+    a [label = "RefReader m a"]
+    Node [margin=0, shape = none, width=0, height=0]
+    w [label = "writeRefDyn"]
+    a -> w
+    r -> w [dir = back, style = "dashed"]
 }
 ~~~~~~~~
 
 
-## Widget decorations
+### Widget decorations
 
 Groups of `Ref`, `RefReader` and `RefWriter` values can
 be connected to GUI widgets.[^widgets]
-This connections may be shown as decorations on reference diagrams.
+This connections are shown as clustering decorations on reference diagrams.
 
 [^widgets]: See the `lgtk` library which is based on `lensref`.
 
-Some possible connetions are the following:
+Possible connections are the following:
 
 -   `(RefReader m String)` computations can be connected to dynamic labels.
     The label shows the actual return value of the computation.
@@ -579,17 +676,17 @@ For example, a Celsius-Fahrenheit converter has two entangled `Double` value ent
 
 ~~~~~~~~ {.dot}
 digraph G {
+    Graph [labeljust = "l", labelloc = "b", fontcolor=gray, pencolor = gray]
     rankdir = BT
-    Edge [arrowtail=inv, dir=both]
-    Node [fontcolor="gray"]
-    b1 -> b2 [label="celsiusToFahrenheit"; constraint="false"]
+    Edge [dir = both, arrowtail=inv]
+    b1 -> b2 [label="lensMap\ncelsiusToFahrenheit"; constraint="false"]
     subgraph cluster_entry1 {
-        Graph [label = "entry1", labeljust = "l", labelloc = "b"]
-        b1 [label = "celsius ::\nRef m Double"]
+        label = "entry"
+        b1 [label = ""]
     }
     subgraph cluster_entry2 {
-        Graph [label = "entry2", labeljust = "l", labelloc = "b"]
-        b2 [label = "fahrenheit ::\nRef m Double"]
+        label = "entry"
+        b2 [label = ""]
     }
 }
 ~~~~~~~~
@@ -597,44 +694,29 @@ digraph G {
 > celsiusToFahrenheit :: Iso' Double Double
 > celsiusToFahrenheit = multiplying 1.8 . adding 32
 
-Gray color marks parts which can be stripped without loosing runtime information about the program.
-The following stripped diagram contains just enough information to describe the same interactive
-program:
-
-~~~~~~~~ {.dot}
-digraph G {
-    rankdir = BT
-    Edge [arrowtail=inv, dir=both]
-    b1 -> b2 [label="celsiusToFahrenheit"; constraint="false"]
-    subgraph cluster_entry1 {
-        Graph [label = "entry1", labeljust = "l", labelloc = "b"]
-        b1 [label = ""]
-    }
-    subgraph cluster_entry2 {
-        Graph [label = "entry2", labeljust = "l", labelloc = "b"]
-        b2 [label = ""]
-    }
-}
-~~~~~~~~
 
 A simple counter has an integer label and a button (here the reference `c` was converted implicitly to a `RefReader`
 value by `readRef`):
 
 ~~~~~~~~ {.dot}
 digraph G {
+    Graph [labeljust = "l", labelloc = "b", fontcolor=gray, pencolor = gray]
     rankdir = BT
-    Node [fontcolor="gray"]
-    c -> cp [xlabel="(+1)"]
-    cp [label = "c' ::\nRefReader m Int", style = dashed]
-    c -> b [dir = back, arrowtail = "vee"]
-    b -> cp  [dir = none]
+    c [label = "Ref m Int"]
+    Node [margin=0, shape = none, width=0, height=0]
+    c -> cv [constraint=false]
+    cv -> b [label = "fmap\n(+1)"]
+    cv -> cvs [constraint=false]
+    Edge [dir = back, style=dashed]
+    c -> b
+    cv [label = "readRef"]
     subgraph cluster_label {
-        Graph [label = "label", labeljust = "l", labelloc = "b"]
-        c [label = "c ::\nRef m Int"]
+        label = "label"
+        cvs [label="fmap show"]
     }
     subgraph cluster_button {
-        Graph [label = "button", labeljust = "l", labelloc = "b"]
-        b [margin=0, shape = point, width=0.1, height=0.1, fillcolor = white]
+        label = "button"
+        b [label = "writeRefDyn"]
     }
 }
 ~~~~~~~~
@@ -646,23 +728,25 @@ by clicking the checkbox twice.
 
 ~~~~~~~~ {.dot}
 digraph G {
+    Graph [labeljust = "l", labelloc = "b", fontcolor=gray, pencolor = gray]
     rankdir = BT
-    Edge [arrowtail=inv, dir=both]
-    Node [fontcolor="gray"]
 //    "main program state" -> "substate ::\nMaybe Int" [label = "k"]
-    r -> "r ::\nRef m (Maybe Int)"  [xlabel = "maybeLens"]
-    r -> "checkbox" [label = "_1"]
-    r -> entryActive [label = "fst", dir = "forward"]
-    r -> entryValue [label = "_2"]
-    r [label = "q ::\nRef m (Bool, Int)"]
+    r [label = "Ref m (Bool, Int)"]
+    q [label = "Ref m (Maybe Int)"]  
+    Node [margin=0, shape = none, width=0, height=0]
+    Edge [dir = both, arrowtail=inv]
+    r -> q [xlabel = "lensMap\nmaybeLens"]
+    r -> "checkbox"
+    r -> entryActive [dir = "forward"]
+    r -> entryValue
     subgraph cluster_checkbox {
-        Graph [label = "checkbox", labeljust = "l", labelloc = "b"]
-        checkbox [label = "value ::\nRef m Bool"]
+        label = "checkbox"
+        checkbox [label = "lensMap _1"]
         }
     subgraph cluster_entry {
-        Graph [label = "entry", labeljust = "l", labelloc = "b"]
-        entryActive [style = "dashed", label="active ::\nRefReader m Bool"]
-        entryValue [label = "value ::\nRef m Int"]
+        label = "entry"
+        entryValue [label = "lensMap _2"]
+        entryActive [label=<<FONT COLOR="grey">active</FONT><BR/>fmap fst . readRef>]
     }
 }
 ~~~~~~~~
@@ -675,28 +759,6 @@ digraph G {
 >     get _ = Nothing
 >     set (_, a) = maybe (False, a) ((,) True)
 
-The same diagram stripped:
-
-~~~~~~~~ {.dot}
-digraph G {
-    rankdir = BT
-    Edge [arrowtail=inv, dir=both]
-    r -> ""  [xlabel = "maybeLens"]
-    r -> "checkbox" [label = "_1"]
-    r -> entryActive [label = "fst", dir = "forward"]
-    r -> entryValue [label = "_2"]
-    r [label = ""]
-    subgraph cluster_checkbox {
-        Graph [label = "checkbox", labeljust = "l", labelloc = "b"]
-        checkbox [label = ""]
-        }
-    subgraph cluster_entry {
-        Graph [label = "entry", labeljust = "l", labelloc = "b"]
-        entryActive [style = "dashed", label=""]
-        entryValue [label = ""]
-    }
-}
-~~~~~~~~
 
 
 # Reference-network creation
@@ -732,20 +794,19 @@ following:
 ~~~~~~~~ {.dot}
 digraph G {
     rankdir = BT
-    a1 [label = "a1 :: Ref m (Bool, Int)"]
-    a2 [label = "a2 :: Ref m (Bool, Int)"]
-    b [label = "b :: Ref m (Maybe Int)"]
-    a1 -> b [arrowtail=inv, dir=both, label="maybeLens"]
-    a2 -> b [arrowtail=inv, dir=both, label="maybeLens"]
+    Edge [dir = both, arrowtail=inv]
+    a1 [label = "Ref m (Bool, Int)"]
+    a2 [label = "Ref m (Bool, Int)"]
+    b [label = "Ref m (Maybe Int)"]
+    a1 -> b [label="lensMap\nmaybeLens"]
+    a2 -> b [label="lensMap\nmaybeLens"]
 }
 ~~~~~~~~
 
 `extendRef` is called reference extension because the result reference
-may contain more information than the original reference.
-For example, considering the previous diagram,
-`a1` and `a2` may have different
-values in some program states, so they are not completely entangled
-and their values are not determined by the value of `b`.
+may contain more information than the original reference
+(the value of the result reference is not determined by the value of
+the original reference).
 
 
 
