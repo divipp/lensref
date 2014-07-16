@@ -25,11 +25,11 @@ import Language.Haskell.Interpreter
 -- digraph G {Hello->World}
 -- ~~~
 
-transform :: Block -> IO Block
+transform :: Block -> IO [Block]
 transform (CodeBlock (id, classes, namevals) contents) | "dot" `elem` classes = tr "dot" id namevals contents 
 transform (CodeBlock (id, classes, namevals) contents) | "fdp" `elem` classes = tr "fdp" id namevals contents 
 transform (CodeBlock (id, classes, namevals) contents) | "ghci" `elem` classes = ghci id namevals contents 
-transform x = return x
+transform x = return [x]
 
 ghci id namevals contents = do
     let file = case lookup "name" namevals of
@@ -55,7 +55,7 @@ ghci id namevals contents = do
     result <- readFile "out"
     let result' = trans result
     writeFile outfile result'
-    return $ RawBlock (Format "latex") $ unlines $ begin ++ [result'] ++ end
+    return [RawBlock (Format "latex") $ unlines $ begin ++ [result'] ++ end]
   where
     begin = ["\\begin{Shaded}","\\begin{Highlighting}[]"]
     end = ["\\end{Highlighting}","\\end{Shaded}\n"]
@@ -99,11 +99,13 @@ tr dot id namevals contents = do
             Nothing   -> ([], "", uniqueName contents)
         infile  = file ++ "." ++ dot
         outfile = file ++ ".pdf"
-        size = maybe [] ((:[]) . ("-Gsize="++)) $ lookup "size" namevals
-        margin = maybe []  ((:[]) . ("-Gmargin="++)) $ lookup "margin" namevals
+        margin = maybe (0.1 :: Double) read (lookup "margin" namevals)
+        size = fmap ((+ margin) . read) (lookup "size" namevals)
+        margin' = ["-Gmargin=" ++ show margin]
+        size' = maybe [] ((:[]) . ("-Gsize="++) . show) size
     writeFile infile contents
     (Just inh, Just outh, Just errh, ph) <- createProcess
-        (proc dot $ ["-Tpdf"] ++ margin ++ size)
+        (proc dot $ ["-Tpdf"] ++ margin' ++ size')
             { std_in  = CreatePipe
             , std_out = CreatePipe
             , std_err = CreatePipe
@@ -121,7 +123,10 @@ tr dot id namevals contents = do
     outh' <- openBinaryFile outfile WriteMode
     hPutStr outh' result
     hClose outh'
-    return $ Para [Image name (outfile, name')]
+    return [ RawBlock (Format "latex") "\\begin{centering}"
+           , Para [Image name (outfile, name')]
+           , RawBlock (Format "latex") "\\end{centering}"
+           ]
 
 -- | Generate a unique filename given the file's contents.
 uniqueName :: String -> String
