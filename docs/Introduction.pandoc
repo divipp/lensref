@@ -629,23 +629,23 @@ digraph G {
 ~~~~~~~~
 
 
-## Graph schemes
+## Diagram schemes
 
-Graph schemes help to modularize complex diagrams.
+Diagram schemes help to modularize complex diagrams.
 
-*Graph schemes* are diagrams in which some nodes are marked as
+*Diagram schemes* are diagrams in which some nodes are marked as
 *parameters*.
-Graph schemes may be *applied* to a cluster of nodes in diagrams which
-means that the graph scheme is instantiated (copied) with the clustered nodes
+Diagram schemes may be *applied* to a cluster of nodes in diagrams which
+means that the diagram scheme is instantiated (copied) with the clustered nodes
 as the scheme parameters.
-Graph scheme parameters have identifiers to help to distinguish them in
+Diagram scheme parameters have identifiers to help to distinguish them in
 scheme applications.
 
-Parameters of graph schemes are shown with a bold outline.
-Graph scheme application is shown with a clustering with a grey outline
+Parameters of diagram schemes are shown with a bold outline.
+Diagram scheme application is shown with a clustering with a grey outline
 and the name of the scheme is show as the label of the clustering in the
 left-top corner.
-Parameter identifier are shown with a grey label above the node label.
+Parameter identifiers are shown with a grey label above the node label.
 An example:
 
 ~~~~~~~~ {.dot size=2}
@@ -667,8 +667,8 @@ digraph G {
 }
 ~~~~~~~~
 
-The diagram shows a graph scheme called "scheme0" applied to itself
-forming an infinite graph (not very useful in this case).
+The diagram shows a diagram scheme called "scheme0" applied to itself
+forming an infinite diagram (not very useful in this case).
 
 
 
@@ -776,7 +776,7 @@ digraph G {
 
 Groups of `Ref`, `RefReader` and `RefWriter` values can
 be connected to GUI widgets.[^widgets]
-This connections are shown as graph scheme applications in reference diagrams.
+This connections are shown as diagram scheme applications in reference diagrams.
 
 [^widgets]: See the `lgtk` library which is based on `lensref`.
 
