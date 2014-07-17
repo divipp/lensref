@@ -148,8 +148,30 @@ Reference writer and creator computations may involve reference reader computati
 `readerToWriter` lifts reference reader computations to reference writer computations;
 `readerToCreator` lifts reference reader computations to reference creator computations.
 
-The distinction between `RefReader`, `RefWriter` and `RefCeator` is necessary
-for operations introduced later.
+
+### On reference reader computations
+
+Any `RefReader` computation has an associated value for each program state, its
+return value.
+Moreover, `RefReader` is isomorphic to the `Reader` monad (see later) so a `RefReader`
+computation is characterized by its associated values.
+Therefore a `RefReader` computation is a non-editable view of the
+program state i.e. a *read-only reference*.
+
+Non-editable views (reference reader computations) and editable views
+(references) of the program state are called *views*.
+
+A reference reader computation can also be seen as a dynamic value.
+For example, an `Int` value is a static integer whilst a `(RefReader Int)` value
+is a dynamically changing integer. Dynamic values contain static values: `(pure 3 :: RefReader Int)` is
+a static dynamically changing integer.
+
+Reference reader computations are closely related to signals in stream-based FRP.
+Notice the difference. A signal is a time-varying value whilst
+a reference reader computation is a state-varying value.
+Although the program state varies by time, a state-varying value
+is not the same as a time-varying value because the program may have the
+same state in different time positions.
 
 
 ## Laws
@@ -408,8 +430,8 @@ The `lensref` interface has a *lens application on references*:
 If references would be implemented as lenses on the program state,
 lens application would be the same as function composition (with arguments flipped).
 It is not possible to implement references with lenses because of several reasons,
-but it is possible to implement `lensMap` with function composition.
-In fact, the current implementation of `lensref` does this.
+but it is possible to use function composition instead of `lensMap`.
+In fact, the current implementation of `lensref` is function composition.
 However, this fact is not reflected in the interface because a newtype
 wrapper on reference values inhibits this. The newtype wrapper is needed only
 to keep the type of references monomorphic.
@@ -445,9 +467,6 @@ Let `(k :: Lens' a b)` and `(q :: Ref m b)`.
 *Reference extension*, or *backward lens application*, helps to
 create a reference `(r :: Ref m a)` such that `q ~ lensMap k r`:
 
-> -- lens-application
-> lensMap :: Lens' a b -> Ref m a -> Ref m b
->
 > -- backward lens application (reference extension)
 > extendRef :: Ref m b -> Lens' a b -> a -> RefCreator m (Ref m a)
 
@@ -497,27 +516,12 @@ Some properties of the `Ref` category:
 
 We draw reference diagrams to visualize different type of connections between views of the program state.
 
-## Views of the program state
-
-Any `RefReader` computation has an associated value for each program state, its
-return value.
-Moreover, `RefReader` is isomorphic to the `Reader` monad so a `RefReader`
-computation is characterized by its associated values.
-Therefore we can see a `RefReader` computation as a non-editable view of the
-program state i.e. a *read-only reference*.
-
-Non-editable views (`RefReader` computations) and editable views
-(references) of the program state are called *views*.
-
-We say that the view `v` depends on the view `w` iff there is a function
-which maps the value of `v` to the value of `w` for any program state.
-
 
 ## `Hask` diagrams
 
 Reference diagrams are based on diagrams in the `Hask` category.
 
-In `Hask` types are objects and functions are arrows.
+In `Hask` objects are types and arrows are functions.
 
 ### Motivation
 
@@ -528,7 +532,7 @@ Why are `Hask` diagrams useful (compared to source code)?
 -   We decorate `Hask` diagrams to show
     data flow between views in the next section.
 
-Constraints shown in diagrams:
+Example for constraints shown in diagrams:
 
 ~~~~~~~~ {.dot size=1.5}
 digraph G {
@@ -635,10 +639,10 @@ Diagram schemes help to modularize complex diagrams.
 
 *Diagram schemes* are diagrams in which some nodes are marked as
 *parameters*.
-Diagram schemes may be *applied* to a cluster of nodes in diagrams which
-means that the diagram scheme is instantiated (copied) with the clustered nodes
-as the scheme parameters.
-Diagram scheme parameters have identifiers to help to distinguish them in
+Diagram schemes may be *applied* to a cluster of nodes in a diagram which
+means that the diagram scheme is instantiated (copied) such that scheme parameters
+are identified with the clustered nodes.
+Diagram scheme parameters have identifiers to help to identify them in
 scheme applications.
 
 Parameters of diagram schemes are shown with a bold outline.
@@ -670,6 +674,13 @@ digraph G {
 The diagram shows a diagram scheme called "scheme0" applied to itself
 forming an infinite diagram (not very useful in this case).
 
+### Diagram schemes vs. functions
+
+What are the advantages of diagram schemes compared to functions?
+
+Diagrams schemes are more general than functions.
+
+TODO
 
 
 ## Reference-diagrams
@@ -681,7 +692,7 @@ Three different kind of decorations are applied:
 
 -   Arrow colour will be red in case of some special functions.
 -   Arrow style of red arrows may not be plain.
--   Layout of nodes may be significant.
+-   Layout of nodes is partially standardized.
 
 ### Arrow colouring
 
@@ -730,18 +741,22 @@ digraph G {
 `writeRefDyn` may be seen as an occasional connection between views.
 
 
-### Layout rule
+### Layout of nodes
 
-Layout of view-nodes is significant.
-The layout rule is the following:
+To help to read reference diagrams,
+we partially standardize the layout of nodes by the following layout rule:
 
-Let `r` and `q` be views.
-If there is a non-decreasing undirected path
-from `a` to `b` through red arrows
-then `b` depends on `a`.
+Let `v` and `w` be views. If `v` determines `w` then `v` cannot be above
+`w` in the diagram.
 
-Because of the layout rule, in case of lens-connection by an isomorphism the references may be shown
-at the same level to reflect that they depend on each-other:
+We say that the view `v` *determines* the view `w` if any of the following holds
+
+-   `w ~ (lensMap k v)` for some `k`
+-   `w ~ (fmap f v)` for some `f`
+-   `w ~ (fmap f $ readRef v)` for some `f`
+
+Because of the layout rule, in case of lens-connection by an isomorphism the references are shown
+at the same level to reflect that they determines each-other:
 
 ~~~~~~~~ {.dot size=2.5}
 digraph G {
@@ -754,8 +769,7 @@ digraph G {
 }
 ~~~~~~~~
 
-The layout rule applies to `RefReader` computations too.
-An example:
+Another example with `RefReader` computations:
 
 ~~~~~~~~ {.dot size=2.5}
 digraph G {
