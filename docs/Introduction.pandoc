@@ -911,28 +911,90 @@ digraph G {
 
 
 
-
-# Tracking changes in the reference-network
-
-## Motivation
+# Reference join
 
 
 ## Semantics
 
-- currentValue
-- instance Monad RefReader
+
+## Examples
 
 
-# Dynamic networks
+# Dynamic network creation
 
-- RefReader m (Ref m a)
-- onChange
-- joinRef
+## Dependency relation
+
+*Dependency* is binary relation between reference
+reading computations and references.
+
+### Motivation
+
+Let `(w :: RefWriter m ())` and let `v` be a reference reader computation.
+Given a program state, we say that `v` is *sensitive* to `w`
+if executing `w` changes the value of `v`.
+
+Sensitivity is not computable in general because equality check is not computable.[^valuechange]
+Dependency is a computable approximate sensitivity relation.
+
+[^valuechange]: Consider `(v :: RefReader (Integer -> Integer))`.
+It is not possible to check the equality of two values of `v`.
+
+### Semantics
+
+Defining rules for dependency for a given program state *s*:
+
+-   `(readRef r)` depends on `r`
+-   `v` depends on `(lensMap k r)` if `v` depends on `r`
+-   `(v >>= f)` depends on `r` if either `v` depends on `r` or
+    `(f a)` depends on `r` where `a` is the value of `r` in *s*
+
+TODO:
+extendRef
+currentValue
+joinRef
+onChange
+
+### Examples
+
+TODO
+
+## Reactions
+
+### Motivation
+
+We want to bind reactions to changes of program state views.
+
+What kind of reactions are appropriate?
+
+-   creation of new references
+-   outer effects
+-   reference write **should be avoided** because
+    it could cause circles in the execution of reactions
+
+=> Reference creation computations
+
+`onChange`
+
+Outer effects may not cause circles because ...
+
+### Semantics
+
+Register all onChange actions
+
+Whenever `writeRef r a` happens,
+do all dependent actions in registration order
+
+
+### Examples
+
+
+
 
 # Resource handling
 
 - onRegionStatusChange
 
+# Implementation / Cost semantics
 
 # Old stuff
 
