@@ -814,18 +814,21 @@ For example, a Celsius-Fahrenheit converter has two entangled `Double` value ent
 
 ~~~~~~~~ {.dot size=2.5}
 digraph G {
-    Graph [labeljust = "l", labelloc = "b", fontcolor=gray, pencolor = gray]
+    Graph [labeljust = "l", labelloc = "t", fontcolor=gray, pencolor = gray]
+    label="Celsius-Fahrenheit converter"
     Edge [color=red]
     rankdir = BT
     Edge [dir = both, arrowtail=inv]
     b1 -> b2 [label="lensMap\ncelsiusToFahrenheit"; constraint="false"]
     subgraph cluster_entry1 {
         margin = 5
+        labelloc = "b"
         label = "entry"
         b1 [label = ""]
     }
     subgraph cluster_entry2 {
         margin = 5
+        labelloc = "b"
         label = "entry"
         b2 [label = ""]
     }
@@ -841,7 +844,8 @@ value by `readRef`):
 
 ~~~~~~~~ {.dot size=2.5}
 digraph G {
-    Graph [labeljust = "l", labelloc = "b", fontcolor=gray, pencolor = gray]
+    Graph [labeljust = "l", labelloc = "t", fontcolor=gray, pencolor = gray]
+    label = "simple counter"
     rankdir = BT
     Edge [color=red]
     c [label = "Ref m Int"]
@@ -854,11 +858,13 @@ digraph G {
     cv [label = "readRef"]
     subgraph cluster_label {
         margin = 5
+        labelloc = "b"
         label = "label"
         cvs [label="fmap show"]
     }
     subgraph cluster_button {
         margin = 5
+        labelloc = "b"
         label = "button"
         b [label = "writeRefDyn"]
     }
