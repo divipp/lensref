@@ -47,10 +47,11 @@ library
                     src
   build-depends:
                     base < 5
-                  , transformers >= 0.3 && < 0.5
+--                  , transformers >= 0.3 && < 0.5
                   , mtl < 2.3
                   , monad-control < 0.4
                   , containers < 0.6
+                  , lens-family
   exposed-modules:
                     Data.LensRef
                     Data.LensRef.EqRef
