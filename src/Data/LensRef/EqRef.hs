@@ -11,7 +11,8 @@ module Data.LensRef.EqRef
     , changing
     ) where
 
-import Control.Lens.Simple
+import Control.Applicative
+import Lens.Family2
 
 import Data.LensRef hiding (readRef, writeRef, lensMap, modRef, joinRef)
 import qualified Data.LensRef as Ref
@@ -49,8 +50,8 @@ data EqRef s a = EqRef
 instance RefClass EqRef where
     toRef = refOfEqRef
     lensMap k (EqRef r c) = EqRef (lensMap k r) $ \b -> readRef r >>= c . set k b
-    joinRef m = EqRef (joinRef $ m <&> toRef) $ \a -> m >>= flip changing a
+    joinRef m = EqRef (joinRef $ toRef <$> m) $ \a -> m >>= flip changing a
 
 toEqRef :: (Eq a, RefContext s) => Ref s a -> EqRef s a
-toEqRef r = EqRef r $ \x -> readRef r <&> (/= x)
+toEqRef r = EqRef r $ \x -> (/= x) <$> readRef r
 

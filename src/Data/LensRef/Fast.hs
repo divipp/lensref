@@ -48,7 +48,10 @@ import qualified Data.IntMap.Strict as Map
 import Control.Applicative
 import Control.Monad.State.Strict
 import Control.Monad.Identity
-import Control.Lens.Simple
+import Lens.Family2
+import Lens.Family2.Stock
+import Lens.Family2.State.Strict
+import Lens.Family2.Unchecked
 
 import Unsafe.Coerce
 

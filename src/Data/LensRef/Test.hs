@@ -16,7 +16,9 @@ import Control.Monad
 import Control.Monad.ST
 import Control.Monad.Writer hiding (Any)
 import Control.Arrow ((***))
-import Control.Lens.Simple
+import Lens.Family2
+import Lens.Family2.Stock
+import Lens.Family2.Unchecked
 
 import Data.LensRef.SimpleRef
 import Data.LensRef

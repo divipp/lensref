@@ -9,6 +9,14 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.ST
 
+---------------------------------
+
+infixl 1 <&>
+
+{-# INLINE (<&>) #-}
+(<&>) :: Functor f => f a -> (a -> b) -> f b
+as <&> f = f <$> as
+
 ----------------
 
 class (Monad m, Applicative m) => RefContext m where

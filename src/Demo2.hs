@@ -13,9 +13,17 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Reader
-import Control.Lens.Simple
+import Lens.Family2
+import Lens.Family2.Stock
+import Lens.Family2.Unchecked
 
 import Data.LensRef.EqRef
+
+infixl 1 <&>
+
+{-# INLINE (<&>) #-}
+(<&>) :: Functor f => f a -> (a -> b) -> f b
+as <&> f = f <$> as
 
 --------------------------------------------------------------------------------
 
@@ -109,7 +117,7 @@ label :: WidgetContext s => String -> Widget s
 label s = pure $ pure (length s, [color 35 s])
 
 padding :: WidgetContext s => Widget s -> Widget s
-padding w = w <&> \l -> l <&> \(n, s) -> (n+2, map ("  " ++) $ replicate n ' ' : s)
+padding w = w <&> \l -> l <&> \(n, s) -> (n+2, map ("  " ++) $ {- replicate n ' ' : -} s)
 
 dynLabel :: WidgetContext s => RefReader s String -> Widget s
 dynLabel r = registerControl (pure [Get r]) (pure 44) (r <&> \s -> " " ++ s ++ " ")
@@ -210,6 +218,16 @@ entryShow r = do
         _ -> (v, Just s)
 
 --------------------------------------------------------------------------------
+
+showw = appendFile "out" . (++ "\n")
+
+demo' :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO ())
+demo' = do
+    (click, put, get, _) <- runWidget (Just $ appendFile "out" . unlines . (++ [[]])) $ do
+        s <- newRef True
+        st <- newRef []
+        padding $ intListEditor (0, True) 15 st s
+    return (click, put, get >=> showw)
 
 demo :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
 demo = do
