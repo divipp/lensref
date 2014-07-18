@@ -1,5 +1,4 @@
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE TypeFamilies #-}
 module Data.LensRef.EqRef
     ( module Data.LensRef
@@ -26,8 +25,13 @@ class RefClass r where
 
 infixr 8 `lensMap`
 
+readRef :: (RefClass r, RefContext m) => r m a -> RefReader m a
 readRef  = Ref.readRef  . toRef
+
+writeRef :: (RefClass r, RefContext m) => r m a -> a -> RefWriter m ()
 writeRef = Ref.writeRef . toRef
+
+modRef :: (RefClass r, RefContext m) => r m a -> (a -> a) -> RefWriter m ()
 modRef   = Ref.modRef   . toRef
 
 instance RefClass Ref where
