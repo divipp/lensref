@@ -22,11 +22,13 @@ myConfig = defaultConfig
 main = defaultMainWith myConfig (return ())
      $  [ bench ("ioref create" ++ show i) $ ioRefTest i | i <- range]
      ++
-        [ bench (imp ++ " " ++ name ++ " " ++ show i) $ f name i
+        [ bgroup (imp ++ " " ++ name)
+            [ bench (show i) $ f name i
+            | n <- range
+            , let i = round $ fromIntegral n * corr * corr2
+            ]
         | (imp, f, corr) <- [("lensref", runPerformanceTests, 1)]
         , (name, corr2) <- [("create", 0.1), ("mapchain", 0.5), ("joinchain", 0.02)]
-        , n <- range
-        , let i = round $ fromIntegral n * corr * corr2
         ]
   where
     range = [20000,40000,60000]
