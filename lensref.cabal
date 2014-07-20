@@ -51,9 +51,6 @@ library
                     Data.LensRef.EqRef
                     Demo
                     Demo2
-  other-modules:
-                    Data.LensRef.Pure
-                    Data.LensRef.Fast
 
   if flag(pure)
     cpp-options:
