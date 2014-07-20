@@ -5,8 +5,6 @@ synopsis:           References which can be joined and on which lenses can be ap
 description:
     The lensref package provides references which can be joined and on which lenses can be applied.
     .
-    To see what is possible to do with lens references, look at the test cases in "Data.LensRef.Test"
-    .
     For more information visit the following links:
     .
     -<http://www.haskell.org/haskellwiki/LGtk haskell.org wiki page>
@@ -33,10 +31,6 @@ source-repository head
   type:             git
   location:         https://github.com/divipp/lensref.git
 
-Flag tests
-  Description:      Build the tests
-  Default:          False
-
 Flag pure
   Description:      Use the pure but slow implementation of lens references
   Default:          False
@@ -60,13 +54,6 @@ library
   other-modules:
                     Data.LensRef.Pure
                     Data.LensRef.Fast
-  if flag(tests)
-    build-depends:
---                    operational < 0.3
---                  , QuickCheck >= 2 && < 2.8
-    exposed-modules:
---                    Data.LensRef.Arbitrary
-                    Data.LensRef.Test
 
   if flag(pure)
     cpp-options:
@@ -85,10 +72,9 @@ test-suite runtests
   main-is:          runtests.hs
   build-depends:
                     base < 5
+                  , mtl < 2.3
+                  , lens-family
                   , lensref
-  if flag(tests)
-    cpp-options:
-                    -D__TESTS__
   ghc-options:
                     -Wall
                     -fwarn-incomplete-record-updates
