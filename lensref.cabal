@@ -47,18 +47,17 @@ library
                     src
   build-depends:
                     base < 5
---                  , transformers >= 0.3 && < 0.5
                   , mtl < 2.3
                   , monad-control < 0.4
                   , containers < 0.6
                   , lens-family
   exposed-modules:
+                    Data.LensRef.SimpleRef
                     Data.LensRef
                     Data.LensRef.EqRef
                     Demo
                     Demo2
   other-modules:
-                    Data.LensRef.SimpleRef
                     Data.LensRef.Pure
                     Data.LensRef.Fast
   if flag(tests)
@@ -103,6 +102,8 @@ benchmark lensref-performance-test
   main-is:          runperftest.hs
   build-depends:
                     base < 5
+                  , mtl < 2.3
+                  , lens-family
                   , criterion
                   , lensref
   if flag(tests)
