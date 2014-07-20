@@ -106,9 +106,6 @@ benchmark lensref-performance-test
                   , lens-family
                   , criterion
                   , lensref
-  if flag(tests)
-    cpp-options:
-                    -D__TESTS__
 
   ghc-options:
                     -Wall
