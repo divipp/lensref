@@ -51,7 +51,6 @@ import Control.Monad.Identity
 import Lens.Family2
 import Lens.Family2.Stock
 import Lens.Family2.State.Strict
-import Lens.Family2.Unchecked
 
 import Unsafe.Coerce
 
