@@ -17,13 +17,8 @@ import Lens.Family2
 import Lens.Family2.Stock
 import Lens.Family2.Unchecked
 
+import Data.LensRef.Context
 import Data.LensRef.EqRef
-
-infixl 1 <&>
-
-{-# INLINE (<&>) #-}
-(<&>) :: Functor f => f a -> (a -> b) -> f b
-as <&> f = f <$> as
 
 --------------------------------------------------------------------------------
 

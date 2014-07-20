@@ -33,8 +33,7 @@ module Data.LensRef
     , onRegionStatusChange_
 
     -- * Reference context
-    , RefContext (..)
-    , modSimpleRef
+    , RefContext
     ) where
 
 import Data.LensRef.Context
