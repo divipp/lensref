@@ -1,6 +1,10 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-module Main where
+-- | Tests for the lens references interface.
+module Data.LensRef.Test
+    ( -- * Tests for the interface
+      runTests
+    ) where
 
 import Data.Maybe
 import Control.Applicative
@@ -15,10 +19,7 @@ import Lens.Family2.Unchecked
 import Data.LensRef.Context
 import Data.LensRef
 
-main :: IO ()
-main = runTests
-
---------------------------------------------------------------------------------
+------------------------------------
 
 type Prog s = WriterT [Maybe (Either String String)] (ST s)
 

@@ -54,7 +54,7 @@ import Lens.Family2.State.Strict
 
 import Unsafe.Coerce
 
-import Data.LensRef.SimpleRef
+import Data.LensRef.Context
 
 ----------------------------------- data types
 

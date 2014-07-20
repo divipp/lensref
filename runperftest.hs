@@ -5,7 +5,7 @@ import Control.Monad
 import Criterion.Main
 import Criterion.Config
 
-import Data.LensRef.SimpleRef
+import Data.LensRef.Context
 import Data.LensRef
 
 --------------------------------------------------------------------------------

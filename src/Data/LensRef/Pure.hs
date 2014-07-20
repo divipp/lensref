@@ -62,7 +62,7 @@ import Lens.Family2.State.Strict
 --import Debug.Trace
 import Unsafe.Coerce
 
-import Data.LensRef.SimpleRef
+import Data.LensRef.Context
 
 ---------------------------------
 

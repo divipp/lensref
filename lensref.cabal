@@ -46,7 +46,7 @@ library
                   , containers < 0.6
                   , lens-family
   exposed-modules:
-                    Data.LensRef.SimpleRef
+                    Data.LensRef.Context
                     Data.LensRef
                     Data.LensRef.EqRef
                     Demo
