@@ -830,6 +830,19 @@ runTests = do
             writeRef r False
             message' "y"
 
+    runTest "issue5" $ do
+        r <- newRef True
+        w <- onChangeMemo (readRef r) $ \b -> if b
+            then fmap return $ onChange (readRef r) $ return . ("e" ++) . show
+            else return $ return $ return "F"
+        _ <- onChange (join w) message
+        return $ do
+            message' "eTrue"
+            writeRef r False
+            message' "F"
+            writeRef r True
+            message' "eTrue"
+
     return ()
 
 
