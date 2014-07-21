@@ -49,8 +49,8 @@ library
                     LensRef.Context
                     LensRef
                     LensRef.EqRef
-                    Demo
-                    Demo2
+                    LensRef.Demo
+                    LensRef.Demo2
 
   if flag(pure)
     cpp-options:

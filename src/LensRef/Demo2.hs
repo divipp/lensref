@@ -2,7 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Demo2 where
+module LensRef.Demo2 where
 
 import Numeric
 import Data.Monoid
