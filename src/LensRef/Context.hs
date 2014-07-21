@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
-module Data.LensRef.Context where
+module LensRef.Context where
 
 import Data.IORef
 import Data.STRef

@@ -10,7 +10,7 @@
 {- |
 lensref core API
 -}
-module Data.LensRef
+module LensRef
     ( -- * Monads
       RefReader            -- RefReader
     , RefCreator           -- RefCreator
@@ -59,7 +59,7 @@ import Lens.Family2.State.Strict
 
 import Unsafe.Coerce
 
-import Data.LensRef.Context
+import LensRef.Context
 
 --------------------------------------------------------------------------------
 #ifdef __PURE__

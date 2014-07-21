@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
-module Data.LensRef.EqRef
-    ( module Data.LensRef
+module LensRef.EqRef
+    ( module LensRef
     , RefClass (..)
     , readRef
     , writeRef
@@ -14,8 +14,8 @@ module Data.LensRef.EqRef
 import Control.Applicative
 import Lens.Family2
 
-import Data.LensRef hiding (readRef, writeRef, lensMap, modRef, joinRef)
-import qualified Data.LensRef as Ref
+import LensRef hiding (readRef, writeRef, lensMap, modRef, joinRef)
+import qualified LensRef as Ref
 
 --------------------------------------------------------------------------------
 

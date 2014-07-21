@@ -12,8 +12,8 @@ import Lens.Family2
 import Lens.Family2.Stock
 import Lens.Family2.Unchecked
 
-import Data.LensRef.Context
-import Data.LensRef
+import LensRef.Context
+import LensRef
 
 main :: IO ()
 main = runTests

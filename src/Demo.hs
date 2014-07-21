@@ -5,7 +5,7 @@ import Control.Monad
 import Control.Monad.Trans
 import Control.Concurrent
 
-import Data.LensRef
+import LensRef
 
 main :: IO ()
 main = do
