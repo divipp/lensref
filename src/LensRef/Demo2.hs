@@ -362,24 +362,24 @@ timer = do
 
 crud :: WidgetContext s => Widget s
 crud = do
-    st <- newRef ["Emil, Hans", "Mustermann, Max", "Tisch, Roman"]
+    names <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
     psel <- newRef ("", Nothing)
     let prefix = lensMap (iso fst (\i->(i,Nothing))) psel
     let sel = lensMap _2 psel
     name <- newRef "John"
     surname <- newRef "Romba"
-    let f (Just i) s = Just $ modRef st $ \l -> take i l ++ [s] ++ drop (i+1) l
+    let f (Just i) s = Just $ modRef names $ \l -> take i l ++ [s] ++ drop (i+1) l
         f Nothing _ = Nothing
         g i = do
-            modRef st $ \l -> take i l ++ drop (i+1) l
+            modRef names $ \l -> take i l ++ drop (i+1) l
             writeRef sel Nothing
-    let ns = (\s n -> s ++ ", " ++ n) <$> readRef surname <*> readRef name
+    let ns = (,) <$> readRef surname <*> readRef name
     vertically
         [ horizontally
             [ label "Filter prefix:"
             , entry prefix
             ]
-        , listbox (filter <$> (readRef prefix <&> isPrefixOf) <*> readRef st) sel
+        , listbox (map (\(s, n) -> s ++ ", " ++ n) <$> (filter <$> (readRef prefix <&> \p -> isPrefixOf p . fst) <*> readRef names)) sel
         , horizontally
             [ label "Name:"
             , entry name
@@ -391,7 +391,7 @@ crud = do
         , horizontally
             [ button (pure "Create") $ pure $ Just $ do
                 n <- readerToWriter ns
-                modRef st (++ [n])
+                modRef names (++ [n])
             , button (pure "Update") $ f <$> readRef sel <*> ns
             , button (pure "Delete") $ readRef sel <&> fmap g
             ]
