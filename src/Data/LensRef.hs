@@ -45,6 +45,8 @@ module Data.LensRef
 
     -- * Reference context
     , RefContext
+
+    , engine
     ) where
 
 import Data.Maybe
@@ -68,6 +70,7 @@ import qualified Data.IntMap as Map
 import Control.Monad.Reader
 import Control.Monad.Writer
 
+engine = "pure"
 ---------------------------------
 
 -- Each atomic reference has a unique identifier
@@ -98,9 +101,6 @@ data UpdateFunState m = UpdateFunState
     , _dependencies :: (Id m, Ids m)       -- (i, dependencies of i)
     , _updateFun :: RefWriter m ()    -- what to run if at least one of the dependency changes
     }
-
--- | TODO
-data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 
 -----------------------------------------------
 
@@ -549,6 +549,7 @@ _3_3 k ~(a,b,c) = k c <&> \c' -> (a,b,c')
 import Data.Monoid
 import qualified Data.IntMap.Strict as Map
 
+engine = "fast"
 ----------------------------------- data types
 
 -- | reference temporal state
@@ -592,9 +593,6 @@ type TIds m = OrdRefSet m (TriggerState m)
 type OrdRef    m a = (Int, SimpleRef m a)
 -- | IORefs with Ord instance
 type OrdRefSet m a = Map.IntMap (SimpleRef m a)
-
--- | TODO
-data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 
 ------------- data types for computations
 
@@ -1105,4 +1103,8 @@ mergeBy p (x:xs) (y:ys) = case p x y of
 --------------------------------------------------------------------------------
 #endif
 --------------------------------------------------------------------------------
+
+-- | TODO
+data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
+
 
