@@ -362,12 +362,12 @@ timer = do
 
 crud :: WidgetContext s => Widget s
 crud = do
-    st <- newRef []
+    st <- newRef ["Emil, Hans", "Mustermann, Max", "Tisch, Roman"]
     psel <- newRef ("", Nothing)
     let prefix = lensMap (iso fst (\i->(i,Nothing))) psel
     let sel = lensMap _2 psel
-    name <- newRef ""
-    surname <- newRef ""
+    name <- newRef "John"
+    surname <- newRef "Romba"
     let f (Just i) s = Just $ modRef st $ \l -> take i l ++ [s] ++ drop (i+1) l
         f Nothing _ = Nothing
         g i = do
