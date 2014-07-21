@@ -1,6 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module LensRef.Demo2 where
 
@@ -48,25 +48,19 @@ color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
 
 --------------------------------------------------------------------------------
 
-newtype WContext m a
-    = WContext { runWContext :: ReaderT (NewCtrl (WContext m), AsyncWrite (WContext m)) m a }
-        deriving (Functor, Applicative, Monad)
+data WidgetContextDict m = WidgetContextDict
+    { registerControlDict :: NewCtrl    (WContext m)
+    , asyncWriteDict      :: AsyncWrite (WContext m)
+    }
 
-instance MonadTrans WContext where
-    lift = WContext . lift
-
-instance RefContext m => RefContext (WContext m) where
-    type SimpleRef (WContext m) = SimpleRef m
-    newSimpleRef = lift . newSimpleRef
-    readSimpleRef = lift . readSimpleRef
-    writeSimpleRef r = lift . writeSimpleRef r
+type WContext m = ReaderT (WidgetContextDict m) m
 
 instance RefContext m => WidgetContext (WContext m) where
     registerControl acts col name = do
-        f <- lift $ WContext $ asks fst
+        f <- lift $ asks registerControlDict
         f acts col name
     asyncWrite d w = do
-        f <- lift $ WContext $ asks snd
+        f <- lift $ asks asyncWriteDict
         f d w
 
 runWidget
@@ -75,9 +69,10 @@ runWidget
     -> Widget (WContext m)
     -> m (Int -> m (), Int -> String -> m (), Int -> m String, Rational -> m (), m [String])
 runWidget autodraw cw = do
-    controlmap <- newSimpleRef mempty
+    controlmap     <- newSimpleRef mempty
     controlcounter <- newSimpleRef 0
     delayedactions <- newSimpleRef mempty
+    currentview    <- newSimpleRef []
 
     let registerControl acts col name = do
             i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
@@ -100,17 +95,16 @@ runWidget autodraw cw = do
             f d ((d1,w1):as)
                 | d < d1    = (d, w): (d1-d,w1): as
                 | otherwise = (d1, w1): f (d-d1) as
-        st = (registerControl, asyncWrite)
+        st = WidgetContextDict registerControl asyncWrite
 
-    flip runReaderT st $ runWContext $ runRefCreator $ \runRefWriter_ -> do
+    flip runReaderT st $ runRefCreator $ \runRefWriter_ -> do
 
         w <- cw <&> fmap snd
 
-        -- TODO: show last change only
-        maybe (pure ()) (\out -> void $ onChangeEq w $ lift . lift . out) autodraw
+        _ <- onChangeEq w $ lift . lift . writeSimpleRef currentview
 
         let runRefWriter :: RefWriter (WContext m) b -> m b
-            runRefWriter = flip runReaderT st . runWContext . runRefWriter_
+            runRefWriter = flip runReaderT st . runRefWriter_
 
             click cs = fromMaybe (fail "not a button or checkbox") $ listToMaybe [runRefWriter act | Click act <- cs]
             put cs s = fromMaybe (fail "not an entry")             $ listToMaybe [runRefWriter $ act s | Put act <- cs]
@@ -118,6 +112,8 @@ runWidget autodraw cw = do
 
             lookup_ :: Int -> m [Action (WContext m)]
             lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
+
+            drawLast = maybe (pure ()) (modSimpleRef currentview (state $ \s -> (s, [])) >>=) autodraw
 
             draw = runRefWriter $ readerToWriter w
 
@@ -135,7 +131,14 @@ runWidget autodraw cw = do
                             | otherwise -> do
                                 lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
 
-        return (lookup_ >=> click, flip $ \s -> lookup_ >=> (`put` s), lookup_ >=> get, delay, draw)
+        lift $ lift $ drawLast
+        return
+            ( \n -> lookup_ n >>= click >> drawLast
+            , \n s -> lookup_ n >>= (`put` s) >> drawLast
+            , \n -> lookup_ n >>= get
+            , \t -> delay t >> drawLast
+            , draw
+            )
 
 --------------------------------------------------------------------------------
 
@@ -258,10 +261,10 @@ entryShow_ active r = do
 
 counter :: WidgetContext s => Widget s
 counter = do
-    x <- newRef (0 :: Int) <&> toEqRef
+    r <- newRef (0 :: Int)
     horizontally
-        [ entryShow (pure True) x
-        , smartButton (return "Count") x (+1)
+        [ entryShow (pure True) r
+        , button (pure "Count") $ pure $ Just $ modRef r (+1)
         ]
 
 --------------------------------------------------------------------------------
@@ -279,53 +282,54 @@ temperatureConverter = do
 celsiusToFahrenheit :: Iso' Double Double
 celsiusToFahrenheit = multiplying 1.8 . adding 32
 
+---------------
+
 adding :: Num a => a -> Iso' a a
 adding n = iso (+n) (subtract n)
 
 multiplying :: (Fractional a, Eq a) => a -> Iso' a a
-multiplying 0 = error "Numeric.Lens.multiplying: factor 0"
+multiplying 0 = error "multiplying: factor 0"
 multiplying n = iso (*n) (/n)
 
 type Iso' a b = Lens' a b
 
 --------------------------------------------------------------------------------
 
+type Time = Int
+
 booker :: WidgetContext s => Widget s
 booker = do
-    booked <- newRef False
-    i <- newRef (0 :: Int)
-    j <- newRef (Nothing :: Maybe Int)
+    booked       <- newRef False
+    startdate    <- newRef (0 :: Time)
+    maybeenddate <- newRef (Nothing :: Maybe Time)
     cell (readRef booked) $ \b -> if b
       then do
-        let g i (Just j) = "You have booked a return flight on " ++ show i ++ "-" ++ show j
-            g i _ = "You have booked a one-way flight on " ++ show i
-        dynLabel $ g <$> readRef i <*> readRef j
+        let showbooking i (Just j) = "You have booked a return flight on " ++ show i ++ "-" ++ show j
+            showbooking i _        = "You have booked a one-way flight on " ++ show i
+        dynLabel $ showbooking <$> readRef startdate <*> readRef maybeenddate
       else do
-        j' <- extendRef j maybeLens (False, 0)
-        (ok1, e1) <- entryShow_ (pure True) i
-        (ok2, e2) <- entryShow_ (readRef $ lensMap _1 j') $ lensMap _2 j'
-        let f _ _ False = Nothing
-            f i (Just j) _ | i > j  = Nothing
-            f _ _ _ = Just $ writeRef booked True
+        boolenddate <- extendRef maybeenddate maybeLens (False, 0)
+        let isreturn = lensMap _1 boolenddate
+            enddate  = lensMap _2 boolenddate
+        (startok, startentry) <- entryShow_ (pure True) startdate
+        (endok,   endentry)   <- entryShow_ (readRef isreturn) enddate
+        let bookaction _ _        False     = Nothing
+            bookaction i (Just j) _ | i > j = Nothing
+            bookaction _ _        _         = Just $ writeRef booked True
         vertically
-            [ combobox [("one-way flight", False), ("return flight", True)] $ lensMap _1 j'
-            , e1
-            , e2
-            , button (pure "Book") $ f <$> readRef i <*> readRef j <*> ((&&) <$> ok1 <*> ok2)
+            [ combobox [("one-way flight", False), ("return flight", True)] isreturn
+            , startentry
+            , endentry
+            , button (pure "Book") $ bookaction <$> readRef startdate <*> readRef maybeenddate <*> ((&&) <$> startok <*> endok)
             ]
+
+----------
 
 maybeLens :: Lens' (Bool, a) (Maybe a)
 maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
-              (\(_,a) -> maybe (False, a) (\a' -> (True, a')))
+                 (\(_,a) -> maybe (False, a) (\a' -> (True, a')))
 
 --------------------------------------------------------------------------------
-
-progress :: WidgetContext s => RefReader s Double -> Widget s
-progress d = dynLabel (d <&> ($"%") . showFFloat (Just 2) . (*100))
-
--- TODO: simplify or complete definition
-hscale :: WidgetContext s => Double -> Double -> Double -> Ref s Double -> Widget s
-hscale _ _ _ r = entryShow (pure True) r
 
 fps :: Rational
 fps = 50
@@ -342,12 +346,12 @@ timer = do
     vertically
         [ horizontally
             [ label "Elapsed Time: "
-            , progress ratio
+            , dynLabel (ratio <&> ($"%") . showFFloat (Just 2) . (*100))
             ]
         , dynLabel $ liftM (\v -> showFFloat (Just 2) v $ "s") $ readRef e
         , horizontally
-            [ label "Duration:  "
-            , hscale 0.0 60.0 10.0 d
+            [ label "Duration: "
+            , entryShow (pure True) d
             ]
         , button (pure "Reset") $ return $ Just $ writeRef e 0
         ]
@@ -423,7 +427,7 @@ demo = do
 
 --run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
 run w = do
-    (click, put, get, delay, _) <- runWidget (Just $ mapM_ putStrLn . (++ [[]])) $ padding w
+    (click, put, get, delay, _) <- runWidget (Just $ mapM_ putStrLn) $ padding w
     return (click, put, get, delay)
 
 
