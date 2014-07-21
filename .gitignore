@@ -1,4 +1,6 @@
 *~
+docs/*.in
+docs/*.out
 docs/*.dot
 docs/*.fdp
 docs/*.pdf
