@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module LensRef.Demo2 where
 
 import Numeric
@@ -91,7 +92,7 @@ runWidget out cw = do
             return $ do
                 c <- col
                 s <- name
-                return (length n + length s, [color 31 n ++ color c s])
+                return (length n + length s, [color c s ++ color 31 (map toSubscript n)])
         asyncWrite d _ | d < 0 = error "asyncWrite"
         asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ f d
           where
@@ -145,7 +146,7 @@ label :: WidgetContext s => String -> Widget s
 label s = pure $ pure (length s, [color 35 s])
 
 padding :: WidgetContext s => Widget s -> Widget s
-padding w = w <&> \l -> l <&> \(n, s) -> (n+2, map ("  " ++) $ {- replicate n ' ' : -} s)
+padding w = w <&> \l -> l <&> \(n, s) -> (n+2, map ("  | " ++) $ {- replicate n ' ' : -} s)
 
 dynLabel :: WidgetContext s => RefReader s String -> Widget s
 dynLabel r = registerControl (pure [Get r]) (pure 44) (r <&> \s -> " " ++ s ++ " ")
@@ -166,7 +167,9 @@ primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bo
 primEntry active ok r =
     registerControl (active <&> \v -> if v then [Put $ writeRef r, Get $ readRef r] else [])
          (active >>= bool (ok <&> bool 42 41) (pure 35))
-         (readRef r <&> \s -> " " ++ s ++ " ")
+         (readRef r <&> \s -> pad 7 s ++ " ")
+  where
+    pad n s = replicate (n - length s) ' ' ++ s
 
 vertically :: WidgetContext s => [Widget s] -> Widget s
 vertically ws = sequence ws <&> \l -> sequence l <&> foldr vert (0, [])
@@ -234,7 +237,7 @@ emptyWidget = horizontally []
 
 -- | Label entry.
 entry :: WidgetContext s => Ref s String -> Widget s
-entry r = primEntry (pure True) (pure True) r
+entry = primEntry (pure True) (pure True)
 
 entryShow :: (Show a, Read a, RefClass r, WidgetContext s) => RefReader s Bool -> r s a -> Widget s
 entryShow a r = entryShow_ a r >>= snd
@@ -270,7 +273,7 @@ counter = do
 
 temperatureConverter :: WidgetContext s => Widget s
 temperatureConverter = do
-    x <- newRef 0
+    x <- newRef (0 :: Double2)
     horizontally
         [ entryShow (pure True) x
         , label "Celsius = "
@@ -278,7 +281,7 @@ temperatureConverter = do
         , label "Fahrenheit"
         ]
 
-celsiusToFahrenheit :: Iso' Double Double
+celsiusToFahrenheit :: (Fractional a, Eq a) => Iso' a a
 celsiusToFahrenheit = multiplying 1.8 . adding 32
 
 ---------------
@@ -335,7 +338,7 @@ fps = 50
 
 timer :: WidgetContext s => Widget s
 timer = do
-    d <- newRef 10.0
+    d <- newRef (10.0 :: Double2)
     e <- liftM (lensMap _2) $ extendRef d (lens fst $ \(_, t) d -> (d, min t d) ) (0, 0)
     let ratio = liftM2 (/) (readRef e) (readRef d) <&> min 1 . max 0
     _ <- onChange ratio $ const $ do
@@ -345,9 +348,9 @@ timer = do
     vertically
         [ horizontally
             [ label "Elapsed Time: "
-            , dynLabel (ratio <&> ($"%") . showFFloat (Just 2) . (*100))
+            , dynLabel (ratio <&> (++"%") . show . (*100))
             ]
-        , dynLabel $ liftM (\v -> showFFloat (Just 2) v $ "s") $ readRef e
+        , dynLabel $ readRef e <&> (++"s") . show
         , horizontally
             [ label "Duration: "
             , entryShow (pure True) d
@@ -540,4 +543,25 @@ undoLens eq = lens get set where
     set (x' : xs, ys) x | eq x x' = (x: xs, ys)
     set (xs, _) x = (x : xs, [])
 
+--------------------------------------------------------------------------------
 
+newtype Double2 = Double2 Double
+    deriving (Eq, Ord, Num, Fractional, Floating, Real, RealFrac, RealFloat)
+
+instance Show Double2 where
+    show d = showFFloat (Just 2) d ""
+instance Read Double2 where
+    readsPrec i = map f . readsPrec i where
+        f (a, s) = (Double2 a, s)
+
+toSubscript '0' = '₀'
+toSubscript '1' = '₁'
+toSubscript '2' = '₂'
+toSubscript '3' = '₃'
+toSubscript '4' = '₄'
+toSubscript '5' = '₅'
+toSubscript '6' = '₆'
+toSubscript '7' = '₇'
+toSubscript '8' = '₈'
+toSubscript '9' = '₉'
+toSubscript _ = error "toSubscript"
