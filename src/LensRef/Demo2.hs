@@ -26,12 +26,12 @@ import LensRef.EqRef
 type Widget s = RefCreator s (RefReader s (Int, [String]))
 
 class RefContext s => WidgetContext s where
-    registerControl :: NewCtrl s
-    asyncWrite :: AsyncWrite s
+    registerControl :: RegisterControl s
+    asyncWrite      :: AsyncWrite s
+
+type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> Widget s
 
 type AsyncWrite s = Rational -> RefWriter s () -> RefCreator s ()
-
-type NewCtrl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> Widget s
 
 data Action s
     = Click (RefWriter s ())             -- button and checkbox
@@ -49,7 +49,7 @@ color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
 --------------------------------------------------------------------------------
 
 data WidgetContextDict m = WidgetContextDict
-    { registerControlDict :: NewCtrl    (WContext m)
+    { registerControlDict :: RegisterControl (WContext m)
     , asyncWriteDict      :: AsyncWrite (WContext m)
     }
 
@@ -63,12 +63,16 @@ instance RefContext m => WidgetContext (WContext m) where
         f <- lift $ asks asyncWriteDict
         f d w
 
+--run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
+run = runWidget (putStr . unlines) . padding
+run' = runWidget (appendFile "out" . unlines) . padding
+
 runWidget
     :: forall m . RefContext m
-    => Maybe ([String] -> m ())
+    => ([String] -> m ())
     -> Widget (WContext m)
-    -> m (Int -> m (), Int -> String -> m (), Int -> m String, Rational -> m (), m [String])
-runWidget autodraw cw = do
+    -> m (Int -> m (), Int -> String -> m (), Int -> m (), Rational -> m ())
+runWidget out cw = do
     controlmap     <- newSimpleRef mempty
     controlcounter <- newSimpleRef 0
     delayedactions <- newSimpleRef mempty
@@ -89,7 +93,7 @@ runWidget autodraw cw = do
                 s <- name
                 return (length n + length s, [color 31 n ++ color c s])
         asyncWrite d _ | d < 0 = error "asyncWrite"
-        asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ \as -> f d as
+        asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ f d
           where
             f d [] = [(d, w)]
             f d ((d1,w1):as)
@@ -113,31 +117,26 @@ runWidget autodraw cw = do
             lookup_ :: Int -> m [Action (WContext m)]
             lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
 
-            drawLast = maybe (pure ()) (modSimpleRef currentview (state $ \s -> (s, [])) >>=) autodraw
+            drawLast = modSimpleRef currentview (state $ \s -> (s, [])) >>= out
 
-            draw = runRefWriter $ readerToWriter w
-
-            delay d = runRefWriter $ f d
-              where
-                f d = do
-                    as <- lift $ readSimpleRef delayedactions
-                    case as of
-                        [] -> return ()
-                        ((d1, w1): as)
-                            | d1 <= d -> do
-                                lift $ writeSimpleRef delayedactions as
-                                w1
-                                f (d-d1)
-                            | otherwise -> do
-                                lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
+            delay d = do
+                as <- lift $ readSimpleRef delayedactions
+                case as of
+                    [] -> return ()
+                    ((d1, w1): as)
+                        | d1 <= d -> do
+                            lift $ writeSimpleRef delayedactions as
+                            w1
+                            delay (d-d1)
+                        | otherwise ->
+                            lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
 
         lift $ lift $ drawLast
         return
             ( \n -> lookup_ n >>= click >> drawLast
             , \n s -> lookup_ n >>= (`put` s) >> drawLast
-            , \n -> lookup_ n >>= get
-            , \t -> delay t >> drawLast
-            , draw
+            , \n -> (lookup_ n >>= get) >>= out . (:[])
+            , \t -> runRefWriter (delay t) >> drawLast
             )
 
 --------------------------------------------------------------------------------
@@ -407,29 +406,11 @@ listbox as mi = do
 
 --------------------------------------------------------------------------------
 
-showw = appendFile "out" . (++ "\n")
-
-demo' :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO ())
-demo' = do
-    (click, put, get, _, _) <- runWidget (Just $ appendFile "out" . unlines . (++ [[]])) $ do
-        s <- newRef True
-        st <- newRef []
-        padding $ intListEditor (0, True) 15 st s
-    return (click, put, get >=> showw)
-
-demo :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
-demo = do
-    (click, put, get, _, _) <- runWidget (Just $ mapM_ putStrLn . (++ [[]])) $ do
-        s <- newRef True
-        st <- newRef []
-        padding $ intListEditor (0, True) 15 st s
-    return (click, put, get)
-
---run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
-run w = do
-    (click, put, get, delay, _) <- runWidget (Just $ mapM_ putStrLn) $ padding w
-    return (click, put, get, delay)
-
+editor :: WidgetContext s => Widget s
+editor = do
+    s <- newRef True
+    st <- newRef []
+    intListEditor (0, True) 15 st s
 
 intListEditor
     :: forall s
