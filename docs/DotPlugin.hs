@@ -81,14 +81,19 @@ color c s = "\\" ++ c' ++ "Tok{" ++ esc s ++ "}"
  -}
   where
     c' = case c of
-        31  -> "Comment"
-        32  -> "Alert"
-        35  -> "Keyword"
-        37  -> "DataType"
-        41  -> "DecVal"
-        42  -> "Float"
-        44  -> "Char"
+        31  -> "Comment"    -- index
+
+        37  -> "DecVal"     -- button
+        42  -> "String"      -- entry
+        44  -> "Float"    -- dyn label
+
+        32  -> "Char"       -- selected
+        35  -> "DataType"   -- not active
+        41  -> "Alert"      -- error
+
         i -> error $ "color " ++ show i
+-- Error Alert Comment Keyword
+-- Normal RegionMarker Function DataType Other String Char Float DecVal BaseN
 
 esc = escapeStringUsing latexesc
 latexesc = backslashEscapes "{}"
