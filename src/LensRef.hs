@@ -188,7 +188,7 @@ newRef a = RefCreator $ do
                          [ na
                          | na <- maybe [] Set.toList $ Map.lookup b revmap
                          , let (UpdateFunState alive (a, _) _) = st Map.! na
-                         , alive
+--                         , alive
                          , a `Set.notMember` db
                          ]
 
@@ -670,7 +670,7 @@ newReference st a0 = do
                             RefState _ revDep <- readSimpleRef w
                             ls <- flip filterM (Map.toList revDep) $ \(_, na) -> do
                                 TriggerState alive (i, _) _ _ _ <- readSimpleRef na
-                                pure $ alive && not (Map.member i dep)
+                                pure $ {-alive &&-} not (Map.member i dep)
                             return ls
 
                         collects p = mapM_ (collect p) =<< ch p
@@ -680,7 +680,8 @@ newReference st a0 = do
                             writeSimpleRef ov $ ts { _reverseDeps = Map.insert i op $ _reverseDeps ts }
                             when (Map.null $ _reverseDeps ts) $ collects v
 
-                    as <- (`filterM` Map.toList nas) $ \(_, na) -> readSimpleRef na <&> _alive
+                    let as = Map.toList nas
+--                    as <- (`filterM` Map.toList nas) $ \(_, na) -> readSimpleRef na <&> _alive
                     mapM_ collects as
 
                     let topSort [] = return $ pure ()
