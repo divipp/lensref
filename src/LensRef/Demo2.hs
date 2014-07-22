@@ -112,7 +112,7 @@ runWidget out cw = do
                     _ -> Map.insert i cs
                 f Unblock = acts
                 f _ = pure []
-            _ <- onChange acts $ lift . setControlActions
+            void $ onChange acts $ lift . setControlActions
             onRegionStatusChange_ $ \msg -> f msg <&> setControlActions
             let n = show i
             addLayout $ return $ (,) () $ do
@@ -133,7 +133,7 @@ runWidget out cw = do
         cw
         w <- getLayout <&> fmap snd
 
-        _ <- onChangeEq w $ lift . writeSimpleRef currentview
+        void $ onChangeEq w $ lift . writeSimpleRef currentview
 
         let runRefWriter :: RefWriter (WContext m) b -> m b
             runRefWriter = flip runReaderT st . runRefWriter_
@@ -341,25 +341,24 @@ booker = do
     booked       <- newRef False
     startdate    <- newRef (0 :: Time)
     maybeenddate <- newRef (Nothing :: Maybe Time)
+    boolenddate  <- extendRef maybeenddate maybeLens (False, 0)
+    let isreturn = lensMap _1 boolenddate
+        bookaction ok = f <$> readRef startdate <*> readRef maybeenddate <*> ok
+          where
+            f _ _        False     = Nothing
+            f i (Just j) _ | i > j = Nothing
+            f _ _        _         = Just $ writeRef booked True
+    -- view
     void $ cell (readRef booked) $ \case
       True -> do
-        -- view
         let showbooking i (Just j) = "You have booked a return flight on " ++ show i ++ "-" ++ show j
             showbooking i _        = "You have booked a one-way flight on " ++ show i
         dynLabel $ showbooking <$> readRef startdate <*> readRef maybeenddate
       False -> do
-        -- submodel (editing stage)
-        boolenddate <- extendRef maybeenddate maybeLens (False, 0)
-        let isreturn = lensMap _1 boolenddate
-            enddate  = lensMap _2 boolenddate
-        let buildbookaction _ _        False     = Nothing
-            buildbookaction i (Just j) _ | i > j = Nothing
-            buildbookaction _ _        _         = Just $ writeRef booked True
-        -- view
         combobox [("one-way flight", False), ("return flight", True)] isreturn
         startok <- entryShow (pure True) startdate
-        endok   <- entryShow (readRef isreturn) enddate
-        button "Book" $ buildbookaction <$> readRef startdate <*> readRef maybeenddate <*> ((&&) <$> startok <*> endok)
+        endok   <- entryShow (readRef isreturn) $ lensMap _2 boolenddate
+        button "Book" $ bookaction $ (&&) <$> startok <*> endok
 
 ----------
 
@@ -374,33 +373,36 @@ fps = 50
 
 timer :: WidgetContext s => RefCreator s ()
 timer = do
-    d <- newRef (10.0 :: Double2)
-    e <- liftM (lensMap _2) $ extendRef d (lens fst $ \(_, t) d -> (d, min t d) ) (0, 0)
-    let ratio = liftM2 (/) (readRef e) (readRef d) <&> min 1 . max 0
-    _ <- onChange ratio $ const $ do
-        t <- readerToCreator $ readRef e
-        duration <- readerToCreator $ readRef d
-        when (t < duration) $ asyncWrite (1/fps) $ writeRef e $ min duration $ t + 1/realToFrac fps
+    -- model
+    duration <- newRef (10.0 :: Double2)
+    elapsed  <- extendRef duration (lens fst $ \(_, t) d -> (d, min t d)) (0, 0) <&> lensMap _2
+    let ratio = ((/) <$> readRef elapsed <*> readRef duration) <&> min 1 . max 0
+        reset = writeRef elapsed 0
+    void $ onChange ratio $ const $ do
+        t <- readerToCreator $ readRef elapsed
+        d <- readerToCreator $ readRef duration
+        when (t < d) $ asyncWrite (1/fps) $ writeRef elapsed $ min d $ t + 1/realToFrac fps
+    -- view
     vertically $ do
         horizontally $ do
             label "Elapsed Time: "
             dynLabel (ratio <&> (++"%") . show . (*100))
-        dynLabel $ readRef e <&> (++"s") . show
+        dynLabel $ readRef elapsed <&> (++"s") . show
         horizontally $ do
             label "Duration: "
-            void $ entryShow (pure True) d
-        button "Reset" $ return $ Just $ writeRef e 0
+            void $ entryShow (pure True) duration
+        button "Reset" $ pure $ Just reset
 
 --------------------------------------------------------------------------------
 
 crud :: WidgetContext s => RefCreator s ()
 crud = do
 --------- model
-    names <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
-    name  <- newRef ("Romba", "John")
-    psel  <- newRef ("", Nothing)
-    let prefix = lensMap (iso fst (\i->(i,Nothing))) psel
-        sel    = lensMap _2 psel
+    names   <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
+    name    <- newRef ("Romba", "John")
+    prefix  <- newRef ""
+    sel     <- extendRef prefix (iso fst (\i->(i,Nothing))) ("", Nothing) <&> lensMap _2
+    let
         create = do
             n <- readerToWriter $ readRef name
             modRef names (++ [n])
