@@ -268,26 +268,27 @@ entryShow_ active r = do
 
 counter :: WidgetContext s => Widget s
 counter = do
+    -- model
     r <- newRef (0 :: Int)
+    let inc = modRef r (+1)
+    -- view
     horizontally
-        [ entryShow (pure True) r
-        , button "Count" $ pure $ Just $ modRef r (+1)
+        [ dynLabel $ readRef r <&> show
+        , button "Count" $ pure $ Just inc
         ]
 
 --------------------------------------------------------------------------------
 
 temperatureConverter :: WidgetContext s => Widget s
 temperatureConverter = do
-    x <- newRef (0 :: Double2)
+    -- model
+    celsius <- newRef (0 :: Double2)
+    let fahrenheit = multiplying 1.8 . adding 32 `lensMap` celsius
+    -- view
     horizontally
-        [ entryShow (pure True) x
-        , label "Celsius = "
-        , entryShow (pure True) (celsiusToFahrenheit `lensMap` x)
-        , label "Fahrenheit"
+        [ entryShow (pure True) celsius ,   label "Celsius = "
+        , entryShow (pure True) fahrenheit, label "Fahrenheit"
         ]
-
-celsiusToFahrenheit :: (Fractional a, Eq a) => Iso' a a
-celsiusToFahrenheit = multiplying 1.8 . adding 32
 
 ---------------
 
@@ -306,28 +307,33 @@ type Time = Int
 
 booker :: WidgetContext s => Widget s
 booker = do
+    -- model
     booked       <- newRef False
     startdate    <- newRef (0 :: Time)
     maybeenddate <- newRef (Nothing :: Maybe Time)
     cell (readRef booked) $ \case
       True -> do
+        -- view
         let showbooking i (Just j) = "You have booked a return flight on " ++ show i ++ "-" ++ show j
             showbooking i _        = "You have booked a one-way flight on " ++ show i
         dynLabel $ showbooking <$> readRef startdate <*> readRef maybeenddate
       False -> do
+        -- submodel (editing stage)
         boolenddate <- extendRef maybeenddate maybeLens (False, 0)
         let isreturn = lensMap _1 boolenddate
             enddate  = lensMap _2 boolenddate
         (startok, startentry) <- entryShow_ (pure True) startdate
         (endok,   endentry)   <- entryShow_ (readRef isreturn) enddate
-        let bookaction _ _        False     = Nothing
-            bookaction i (Just j) _ | i > j = Nothing
-            bookaction _ _        _         = Just $ writeRef booked True
+        let buildbookaction _ _        False     = Nothing
+            buildbookaction i (Just j) _ | i > j = Nothing
+            buildbookaction _ _        _         = Just $ writeRef booked True
+            bookaction = buildbookaction <$> readRef startdate <*> readRef maybeenddate <*> ((&&) <$> startok <*> endok)
+        -- view
         vertically
             [ combobox [("one-way flight", False), ("return flight", True)] isreturn
             , startentry
             , endentry
-            , button "Book" $ bookaction <$> readRef startdate <*> readRef maybeenddate <*> ((&&) <$> startok <*> endok)
+            , button "Book" bookaction
             ]
 
 ----------
