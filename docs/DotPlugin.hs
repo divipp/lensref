@@ -81,11 +81,12 @@ color c s = "\\" ++ c' ++ "Tok{" ++ esc s ++ "}"
  -}
   where
     c' = case c of
-        31  -> "Comment"    -- index
+        31  -> "BaseN"    -- bars
+        33  -> "Comment"    -- index
 
         37  -> "DecVal"     -- button
-        42  -> "String"      -- entry
-        44  -> "Float"    -- dyn label
+        42  -> "String"     -- entry
+        44  -> "Float"      -- dyn label
 
         32  -> "Char"       -- selected
         35  -> "DataType"   -- not active
