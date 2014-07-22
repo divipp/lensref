@@ -28,14 +28,10 @@ import LensRef.EqRef
 --------------------------------------------------------------------------------
 
 class RefContext s => WidgetContext s where
-    addControl     :: RegisterControl s
-    asyncWrite     :: AsyncWrite s
+    addControl     :: RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
     addLayout      :: RefCreator s (a, Layout s) -> RefCreator s a
     collectLayouts :: RefCreator s [Layout s]
-
-type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
-
-type AsyncWrite s = Rational -> RefWriter s () -> RefCreator s ()
+    asyncWrite     :: Rational -> RefWriter s () -> RefCreator s ()
 
 type Layout s = RefReader s Doc
 
@@ -50,6 +46,15 @@ data Action s
 
 type Color = Int
 
+red, green, magenta, grey, redbackground, greenbackground, bluebackground :: Color
+red     = 31
+green   = 32
+magenta = 35
+grey    = 37
+redbackground   = 41
+greenbackground = 42
+bluebackground  = 44
+
 color :: Color -> String -> String
 color (-1) s = s
 color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
@@ -61,6 +66,10 @@ data WidgetContextDict m = WidgetContextDict
     , asyncWriteDict      :: AsyncWrite (WContext m)
     , collDict            :: SimpleRef m [Layout (WContext m)]
     }
+
+type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
+
+type AsyncWrite s = Rational -> RefWriter s () -> RefCreator s ()
 
 type WContext m = ReaderT (WidgetContextDict m) m
 
@@ -113,7 +122,7 @@ runWidget out cw = do
             addLayout $ return $ (,) () $ do
                 c <- col
                 s <- name
-                return (length n + length s, [color c s ++ color 31 (map toSubscript n)])
+                return (length n + length s, [color c s ++ color red (map toSubscript n)])
         asyncWrite d _ | d < 0 = error "asyncWrite"
         asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ f d
           where
@@ -163,13 +172,13 @@ runWidget out cw = do
 --------------------------------------------------------------------------------
 
 label :: WidgetContext s => String -> RefCreator s ()
-label s = addLayout $ return ((), pure (length s, [color 35 s]))
+label s = addLayout $ return ((), pure (length s, [color magenta s]))
 
 padding :: WidgetContext s => RefCreator s a -> RefCreator s a
 padding w = addLayout $ (,) <$> w <*> (getLayout <&> fmap (\(n, s) -> (n+2, map ("  | " ++) s)))
 
 dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
-dynLabel r = addControl (pure [Get r]) (pure 44) (r <&> \s -> " " ++ s ++ " ")
+dynLabel r = addControl (pure [Get r]) (pure bluebackground) (r <&> \s -> " " ++ s ++ " ")
 
 primButton
     :: WidgetContext s
@@ -180,13 +189,13 @@ primButton
     -> RefCreator s ()
 primButton name col vis act =
     addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
-         (fromMaybe (pure 37) col >>= \c -> vis <&> bool c 35)
+         (fromMaybe (pure grey) col >>= \c -> vis <&> bool c magenta)
          name
 
 primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> RefCreator s ()
 primEntry active ok r =
     addControl (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
-         (active >>= bool (ok <&> bool 42 41) (pure 35))
+         (active >>= bool (ok <&> bool greenbackground redbackground) (pure magenta))
          (readRef r <&> pad 7 . (++ " "))
   where
     pad n s = replicate (n - length s) ' ' ++ s
@@ -225,7 +234,7 @@ checkbox r = primButton (readRef r <&> show) Nothing (pure True) $ modRef r not
 
 combobox :: (WidgetContext s, Eq a) => [(String, a)] -> Ref s a -> RefCreator s ()
 combobox as i = horizontally $ sequence_
-    [ primButton (pure s) (Just $ readRef i <&> bool 32 37 . (== n)) (pure True) $ writeRef i n
+    [ primButton (pure s) (Just $ readRef i <&> bool green grey . (== n)) (pure True) $ writeRef i n
     | (s, n) <- as
     ]
 
@@ -237,7 +246,7 @@ notebook m = do
     i <- newRef (0 :: Int)
     vertically $ do
         horizontally $ sequence_
-            [ primButton (pure s) (Just $ readRef i <&> bool 32 37 . (== n)) (pure True) $ writeRef i n
+            [ primButton (pure s) (Just $ readRef i <&> bool green grey . (== n)) (pure True) $ writeRef i n
             | (n, (s,_)) <- zip [0..] ws
             ]
         padding $ void $ cell (readRef i) $ \i -> snd (ws !! i)
@@ -422,7 +431,7 @@ listbox sel as = void $ cell (as <&> null) $ \case
     True -> return ()
     False -> vertically $ do
         primButton (as <&> snd . head)
-                   (Just $ (as <&> \x -> maybe 37 (bool 32 37 . (== fst (head x)))) <*> readRef sel)
+                   (Just $ (as <&> \x -> maybe grey (bool green grey . (== fst (head x)))) <*> readRef sel)
                    (pure True)
                    (writeRef sel . Just . fst . head =<< readerToWriter as)
         listbox sel (as <&> drop 1)    -- TODO: should work with tail instead of drop 1
