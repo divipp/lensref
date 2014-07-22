@@ -443,7 +443,7 @@ type WContext m = ReaderT (WidgetContextDict m) m
 data WidgetContextDict m = WidgetContextDict
     { addControlDict   :: RegisterControl (WContext m)
     , asyncWriteDict   :: Rational -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
-    , widgetCollection :: SimpleRef m [RefReader (WContext m) Doc]
+    , widgetCollection :: SimpleRef m (RefReader (WContext m) [Doc])
     }
 
 type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
@@ -457,13 +457,13 @@ instance RefContext m => WidgetContext (WContext m) where
         f d w
     addLayout f = do
         c <- lift $ asks widgetCollection
-        vs <- lift $ modSimpleRef c $ state $ \s -> (s, [])
+        vs <- lift $ modSimpleRef c $ state $ \s -> (s, pure [])
         (a, v) <- f
-        lift $ modSimpleRef c $ modify $ (++ v: vs)
+        lift $ modSimpleRef c $ modify $ liftA2 (++) $ liftA2 (:) v vs
         return a
     collectLayouts = do
         c <- lift $ asks widgetCollection
-        lift $ modSimpleRef c $ state $ \s -> (sequence $ reverse s, [])
+        lift $ modSimpleRef c $ state $ \s -> (reverse <$> s, pure [])
 
 --run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
 run = runWidget (putStr . unlines) . padding
@@ -479,7 +479,7 @@ runWidget out buildwidget = do
     controlcounter <- newSimpleRef 0
     delayedactions <- newSimpleRef mempty
     currentview    <- newSimpleRef mempty
-    collection     <- newSimpleRef mempty
+    collection     <- newSimpleRef $ pure []
 
     let addControl acts col name = do
             i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
