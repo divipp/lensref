@@ -28,7 +28,16 @@ import LensRef.EqRef
 
 --------------------------------------------------------------------------------
 
--- | Try in ghci as `(click, put, get, delay) <- run counter`
+{- |
+Simple counter
+
+Try in ghci:
+
+> (click, put, get, delay) <- run counter
+> click 1
+> get 0
+
+-}
 counter :: WidgetContext s => RefCreator s ()
 counter = do
     -- model
@@ -53,7 +62,7 @@ temperatureConverter = do
         void $ entryShow fahrenheit
         label "Fahrenheit"
 
----------------
+--------------- defined in Control.Lens
 
 adding :: Num a => a -> Lens' a a
 adding n = iso (+n) (subtract n)
@@ -94,7 +103,7 @@ booker = do
         endok   <- entryShowActive (readRef isreturn) $ lensMap _2 boolenddate
         button "Book" $ bookaction $ (&&) <$> startok <*> endok
 
-----------
+---------- part of the toolkit
 
 maybeLens :: Lens' (Bool, a) (Maybe a)
 maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
@@ -115,7 +124,7 @@ timer = do
     void $ onChange ratio $ const $ do
         t <- readerToCreator $ readRef elapsed
         d <- readerToCreator $ readRef duration
-        when (t < d) $ asyncWrite (1/fps) $ modRef elapsed $ min d . (+ 1/realToFrac fps)
+        when (t < d) $ asyncDo (1/fps) $ modRef elapsed $ min d . (+ 1/realToFrac fps)
     -- view
     vertically $ do
         horizontally $ do
@@ -158,7 +167,7 @@ crud = do
             button "Update" $ fmap <$> (update <$> readRef name) <*> readRef sel
             button "Delete" $ fmap delete <$> readRef sel
 
----------------
+--------------- part of the toolkit
 
 listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, String)] -> RefCreator s ()
 listbox sel as = void $ (null <$> as) `switch` \case
@@ -246,7 +255,7 @@ intListEditor def maxi list_ range = do
 
     (f *** g) (a, b) = (f a, g b)
 
------------
+----------- part of the toolkit
 
 listEditor :: WidgetContext s => a -> [Ref s a -> RefCreator s ()] -> Ref s [a] -> RefCreator s ()
 listEditor _ [] _ = error "not enought editors for listEditor"
@@ -315,7 +324,8 @@ smartButton
     :: WidgetContext s
     => RefReader s String     -- ^ dynamic label of the button
     -> EqRef s a              -- ^ underlying reference
-    -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference. When the button is pressed, the readRef of the reference is modified with this function.
+    -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference.
+                  --   When the button is pressed the reference is modified with this function.
     -> RefCreator s ()
 smartButton s r f
     = primButton s Nothing (readRef r >>= changing r . f) (modRef r f)
@@ -413,7 +423,9 @@ class RefContext s => WidgetContext s where
     addLayout      :: RefCreator s (a, RefReader s Doc) -> RefCreator s a
     collectLayouts :: RefCreator s (RefReader s [Doc])
     addControl     :: RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
-    asyncWrite     :: Rational -> RefWriter s () -> RefCreator s ()
+    asyncDo        :: Delay -> RefWriter s () -> RefCreator s ()
+
+type Delay = Rational   -- duration in seconds
 
 data Action s
     = Click (RefWriter s ())             -- button and checkbox
@@ -437,7 +449,7 @@ instance RefContext m => WidgetContext (WContext m) where
     addControl acts name = do
         f <- lift $ asks addControlDict
         f acts name
-    asyncWrite d w = do
+    asyncDo d w = do
         f <- lift $ asks asyncWriteDict
         f d w
     addLayout f = do
@@ -479,14 +491,14 @@ runWidget out buildwidget = do
             onRegionStatusChange_ $ \msg -> setControlActions <$> f msg
             addLayout $ return $ (,) () $
                 hcomp_ <$> name <*> (pure $ color yellow $ text $ map toSubscript $ show i)
-        asyncWrite d _ | d < 0 = error "asyncWrite"
-        asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ f d
+        asyncDo d _ | d < 0 = error "asyncDo"
+        asyncDo d w = lift $ modSimpleRef delayedactions $ modify $ f d
           where
             f d [] = [(d, w)]
             f d ((d1,w1):as)
                 | d < d1    = (d, w): (d1-d,w1): as
                 | otherwise = (d1, w1): f (d-d1) as
-        st = WidgetContextDict addControl asyncWrite collection
+        st = WidgetContextDict addControl asyncDo collection
 
         delay d = lift (readSimpleRef delayedactions) >>= \case
             [] -> return ()
