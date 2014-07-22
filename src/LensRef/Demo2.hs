@@ -53,14 +53,12 @@ temperatureConverter = do
 
 ---------------
 
-adding :: Num a => a -> Iso' a a
+adding :: Num a => a -> Lens' a a
 adding n = iso (+n) (subtract n)
 
-multiplying :: (Fractional a, Eq a) => a -> Iso' a a
+multiplying :: (Fractional a, Eq a) => a -> Lens' a a
 multiplying 0 = error "multiplying: factor 0"
 multiplying n = iso (*n) (/n)
-
-type Iso' a b = Lens' a b
 
 --------------------------------------------------------------------------------
 
@@ -132,15 +130,15 @@ crud = do
     names   <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
     name    <- newRef ("Romba", "John")
     prefix  <- newRef ""
-    sel     <- lensMap _2 <$> extendRef prefix (iso fst (\i->(i,Nothing))) ("", Nothing)
+    sel     <- lensMap _1 <$> extendRef prefix (iso snd ((,) Nothing)) (Nothing, "")
     let create = do
             n <- readerToWriter $ readRef name
             modRef names (++ [n])
         update s i =
             modRef names $ \l -> take i l ++ [s] ++ drop (i+1) l
         delete i = do
-            modRef names $ \l -> take i l ++ drop (i+1) l
             writeRef sel Nothing
+            modRef names $ \l -> take i l ++ drop (i+1) l
         filterednames
             =   (readRef prefix <&> \p -> filter (isPrefixOf p . fst . snd))
             <*> (zip [0..] <$> readRef names)
@@ -187,7 +185,7 @@ intListEditor def maxi list_ range = do
     (undo, redo)  <- undoTr ((==) `on` map fst) list_
     op <- newRef sum
     notebook $ do
-        item "Editor" $ do
+        nameditem "Editor" $ do
             horizontally $ do
                 button "Undo" undo
                 button "Redo" redo
@@ -215,7 +213,7 @@ intListEditor def maxi list_ range = do
                 dynLabel $ show <$> (readRef op <*> (map fst <$> sel))
                 label "selected sum"
             padding $ listEditor def (map itemEditor [0..]) list_
-        item "Settings" $ horizontally $ do
+        nameditem "Settings" $ horizontally $ do
             label "create range"
             checkbox range
  where
@@ -262,7 +260,6 @@ listLens = lens get set where
     set (_, x) [] = (False, x)
     set _ (l: r) = (True, (l, r))
 
-
 -- | Undo-redo state transformation.
 undoTr
     :: RefContext s
@@ -300,22 +297,6 @@ combobox as i = horizontally $ sequence_
     [ primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
     | (s, n) <- as
     ]
-
-type NoteBookBuilder s = WriterT [(String, RefCreator s ())] (RefCreator s) ()
-
-notebook :: WidgetContext s => NoteBookBuilder s -> RefCreator s ()
-notebook m = do
-    ws <- execWriterT m
-    i <- newRef (0 :: Int)
-    vertically $ do
-        horizontally $ sequence_
-            [ primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
-            | (n, (s,_)) <- zip [0..] ws
-            ]
-        padding $ void $ cell (readRef i) $ \i -> snd (ws !! i)
-
-item :: WidgetContext s => String -> RefCreator s () -> NoteBookBuilder s
-item s m = tell [(s, vertically m)]
 
 -- | Button.
 button
@@ -358,6 +339,22 @@ entryShow active r = do
         ((x,""):_) -> (x, Nothing)
         _ -> (v, Just s)
 
+type NamedWidgets s = WriterT [(String, RefCreator s ())] (RefCreator s) ()
+
+notebook :: WidgetContext s => NamedWidgets s -> RefCreator s ()
+notebook m = do
+    ws <- execWriterT m
+    i <- newRef (0 :: Int)
+    vertically $ do
+        horizontally $ sequence_
+            [ primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
+            | (n, (s,_)) <- zip [0..] ws
+            ]
+        padding $ void $ cell (readRef i) $ \i -> snd (ws !! i)
+
+nameditem :: WidgetContext s => String -> RefCreator s () -> NamedWidgets s
+nameditem s m = tell [(s, vertically m)]
+
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -386,7 +383,7 @@ padding :: WidgetContext s => RefCreator s a -> RefCreator s a
 padding w = addLayout $ (,) <$> w <*> (fmap (\(n, s) -> (n+4, map (color red "  | " ++) s)) <$> getLayout)
 
 dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
-dynLabel r = addControl (pure [Get r]) (pure bluebackground) (r <&> \s -> " " ++ s ++ " ")
+dynLabel r = addControl (pure [Get r]) (pure bluebackground) $ (" " ++) . (++ " ") <$> r
 
 primButton
     :: WidgetContext s
@@ -445,28 +442,28 @@ cell r f = addLayout $ h <$> onChangeMemo r g
 type WContext m = ReaderT (WidgetContextDict m) m
 
 data WidgetContextDict m = WidgetContextDict
-    { registerControlDict :: RegisterControl (WContext m)
-    , asyncWriteDict      :: Rational -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
-    , collDict            :: SimpleRef m [Layout (WContext m)]
+    { addControlDict   :: RegisterControl (WContext m)
+    , asyncWriteDict   :: Rational -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
+    , widgetCollection :: SimpleRef m [Layout (WContext m)]
     }
 
 type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
 
 instance RefContext m => WidgetContext (WContext m) where
     addControl acts col name = do
-        f <- lift $ asks registerControlDict
+        f <- lift $ asks addControlDict
         f acts col name
     asyncWrite d w = do
         f <- lift $ asks asyncWriteDict
         f d w
     addLayout f = do
-        c <- lift $ asks collDict
+        c <- lift $ asks widgetCollection
         vs <- lift $ modSimpleRef c $ state $ \s -> (s, [])
         (a, v) <- f
         lift $ modSimpleRef c $ modify $ (++ v: vs)
         return a
     collectLayouts = do
-        c <- lift $ asks collDict
+        c <- lift $ asks widgetCollection
         lift $ modSimpleRef c $ state $ \s -> (reverse s, [])
 
 --run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
@@ -478,12 +475,12 @@ runWidget
     => ([String] -> m ())
     -> RefCreator (WContext m) ()
     -> m (Int -> m (), Int -> String -> m (), Int -> m (), Rational -> m ())
-runWidget out cw = do
+runWidget out buildwidget = do
     controlmap     <- newSimpleRef mempty
     controlcounter <- newSimpleRef 0
     delayedactions <- newSimpleRef mempty
     currentview    <- newSimpleRef mempty
-    coll           <- newSimpleRef mempty
+    collection     <- newSimpleRef mempty
 
     let addControl acts col name = do
             i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
@@ -506,14 +503,29 @@ runWidget out cw = do
             f d ((d1,w1):as)
                 | d < d1    = (d, w): (d1-d,w1): as
                 | otherwise = (d1, w1): f (d-d1) as
-        st = WidgetContextDict addControl asyncWrite coll
+        st = WidgetContextDict addControl asyncWrite collection
+
+        delay d = lift (readSimpleRef delayedactions) >>= \case
+            [] -> return ()
+            ((d1, w1): as)
+                | d1 <= d -> do
+                    lift $ writeSimpleRef delayedactions as
+                    w1
+                    delay (d-d1)
+                | otherwise ->
+                    lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
+
+        lookup_ :: Int -> m [Action (WContext m)]
+        lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
+
+        draw = modSimpleRef currentview (state $ \s -> (s, [])) >>= out
 
     flip runReaderT st $ runRefCreator $ \runRefWriter_ -> do
 
-        cw
-        w <- fmap snd <$> getLayout
-
-        void $ onChangeEq w $ lift . writeSimpleRef currentview
+        buildwidget
+        layout <- fmap snd <$> getLayout
+        void $ onChangeEq layout $ lift . writeSimpleRef currentview
+        lift $ lift draw
 
         let runRefWriter :: RefWriter (WContext m) b -> m b
             runRefWriter = flip runReaderT st . runRefWriter_
@@ -522,27 +534,11 @@ runWidget out cw = do
             put cs s = fromMaybe (fail "not an entry")             $ listToMaybe [runRefWriter $ act s | Put act <- cs]
             get cs   = fromMaybe (fail "not an entry or label")    $ listToMaybe [runRefWriter $ readerToWriter act | Get act <- cs]
 
-            lookup_ :: Int -> m [Action (WContext m)]
-            lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
-
-            drawLast = modSimpleRef currentview (state $ \s -> (s, [])) >>= out
-
-            delay d = lift (readSimpleRef delayedactions) >>= \case
-                [] -> return ()
-                ((d1, w1): as)
-                    | d1 <= d -> do
-                        lift $ writeSimpleRef delayedactions as
-                        w1
-                        delay (d-d1)
-                    | otherwise ->
-                        lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
-
-        lift $ lift drawLast
         return
-            ( \n -> lookup_ n >>= click >> drawLast
-            , \n s -> lookup_ n >>= (`put` s) >> drawLast
+            ( \n -> lookup_ n >>= click >> draw
+            , \n s -> lookup_ n >>= (`put` s) >> draw
             , \n -> (lookup_ n >>= get) >>= out . (:[])
-            , \t -> runRefWriter (delay t) >> drawLast
+            , \t -> runRefWriter (delay t) >> draw
             )
 
 
