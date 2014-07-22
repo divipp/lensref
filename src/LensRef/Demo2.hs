@@ -4,9 +4,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 module LensRef.Demo2 where
 
 import Numeric
+import Data.String
 import Data.Monoid
 import Data.Function
 import Data.List
@@ -39,6 +41,11 @@ data Action s
     = Click (RefWriter s ())             -- button and checkbox
     | Put   (String -> RefWriter s ())   -- entry
     | Get   (RefReader s String)         -- entry and dynamic label
+
+--------------------------------------------------------------------------------
+
+instance RefContext s => IsString (RefReader s String) where
+    fromString = pure
 
 --------------------------------------------------------------------------------
 
@@ -131,7 +138,7 @@ runWidget out cw = do
                     | otherwise ->
                         lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
 
-        lift $ lift $ drawLast
+        lift $ lift drawLast
         return
             ( \n -> lookup_ n >>= click >> drawLast
             , \n s -> lookup_ n >>= (`put` s) >> drawLast
@@ -145,7 +152,7 @@ label :: WidgetContext s => String -> Widget s
 label s = pure $ pure (length s, [color 35 s])
 
 padding :: WidgetContext s => Widget s -> Widget s
-padding w = w <&> \l -> l <&> \(n, s) -> (n+2, map ("  | " ++) $ {- replicate n ' ' : -} s)
+padding w = w <&> \l -> l <&> \(n, s) -> (n+2, map ("  | " ++) s)
 
 dynLabel :: WidgetContext s => RefReader s String -> Widget s
 dynLabel r = registerControl (pure [Get r]) (pure 44) (r <&> \s -> " " ++ s ++ " ")
@@ -196,11 +203,10 @@ checkbox :: WidgetContext s => Ref s Bool -> Widget s
 checkbox r = primButton (readRef r <&> show) Nothing (pure True) $ modRef r not
 
 combobox :: (WidgetContext s, Eq a) => [(String, a)] -> Ref s a -> Widget s
-combobox as i = do
-    horizontally
-        [ primButton (pure s) (Just $ readRef i <&> bool 32 37 . (== n)) (pure True) $ writeRef i n
-        | (s, n) <- as
-        ]
+combobox as i = horizontally
+    [ primButton (pure s) (Just $ readRef i <&> bool 32 37 . (== n)) (pure True) $ writeRef i n
+    | (s, n) <- as
+    ]
 
 notebook :: WidgetContext s => [(String, Widget s)] -> Widget s
 notebook ws = do
@@ -265,7 +271,7 @@ counter = do
     r <- newRef (0 :: Int)
     horizontally
         [ entryShow (pure True) r
-        , button (pure "Count") $ pure $ Just $ modRef r (+1)
+        , button "Count" $ pure $ Just $ modRef r (+1)
         ]
 
 --------------------------------------------------------------------------------
@@ -321,7 +327,7 @@ booker = do
             [ combobox [("one-way flight", False), ("return flight", True)] isreturn
             , startentry
             , endentry
-            , button (pure "Book") $ bookaction <$> readRef startdate <*> readRef maybeenddate <*> ((&&) <$> startok <*> endok)
+            , button "Book" $ bookaction <$> readRef startdate <*> readRef maybeenddate <*> ((&&) <$> startok <*> endok)
             ]
 
 ----------
@@ -354,7 +360,7 @@ timer = do
             [ label "Duration: "
             , entryShow (pure True) d
             ]
-        , button (pure "Reset") $ return $ Just $ writeRef e 0
+        , button "Reset" $ return $ Just $ writeRef e 0
         ]
 
 --------------------------------------------------------------------------------
@@ -385,19 +391,18 @@ crud = do
         , horizontally [ label "Name:",    entry $ lensMap _2 name ]
         , horizontally [ label "Surname:", entry $ lensMap _1 name ]
         , horizontally
-            [ button (pure "Create") $ pure $ Just create
-            , button (pure "Update") $ fmap <$> (update <$> readRef name) <*> readRef sel
-            , button (pure "Delete") $ fmap delete <$> readRef sel
+            [ button "Create" $ pure $ Just create
+            , button "Update" $ fmap <$> (update <$> readRef name) <*> readRef sel
+            , button "Delete" $ fmap delete <$> readRef sel
             ]
         ]
 
 ---------------
 
 listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, String)] -> Widget s
-listbox sel as = do
-    cell (as <&> null) $ \case
-      True -> emptyWidget
-      False -> vertically
+listbox sel as = cell (as <&> null) $ \case
+    True -> emptyWidget
+    False -> vertically
         [ primButton (as <&> snd . head)
                      (Just $ (as <&> \x -> maybe 37 (bool 32 37 . (== fst (head x)))) <*> readRef sel)
                      (pure True)
@@ -427,32 +432,32 @@ intListEditor def maxi list_ range = do
     notebook
         [ (,) "Editor" $ vertically
             [ horizontally
-                [ button (pure "Undo") undo
-                , button (pure "Redo") redo
+                [ button "Undo" undo
+                , button "Redo" redo
                 ]
             , horizontally
                 [ entryShow (pure True) len
                 , label "items"
-                , smartButton (pure "AddItem") len (+1)
-                , smartButton (pure "RemoveItem") len (+(-1))
+                , smartButton "AddItem" len (+1)
+                , smartButton "RemoveItem" len (+(-1))
                 , smartButton (readRef len <&> \n -> "RemoveAll(" ++ show n ++ ")") len $ const 0
                 ]
             , horizontally
-                [ smartButton (pure "All+1")      list $ map $ over _1 (+1)
-                , smartButton (pure "All-1")      list $ map $ over _1 (+(-1))
-                , smartButton (pure "Sort")       list $ sortBy (compare `on` fst)
+                [ smartButton "All+1"      list $ map $ over _1 (+1)
+                , smartButton "All-1"      list $ map $ over _1 (+(-1))
+                , smartButton "Sort"       list $ sortBy (compare `on` fst)
                 ]
             , horizontally
-                [ smartButton (pure "SelectAll")  list $ map $ set _2 True
-                , smartButton (pure "SelectPos")  list $ map $ \(a,_) -> (a, a>0)
-                , smartButton (pure "SelectEven") list $ map $ \(a,_) -> (a, even a)
-                , smartButton (pure "InvertSel")  list $ map $ over _2 not
+                [ smartButton "SelectAll"  list $ map $ set _2 True
+                , smartButton "SelectPos"  list $ map $ \(a,_) -> (a, a>0)
+                , smartButton "SelectEven" list $ map $ \(a,_) -> (a, even a)
+                , smartButton "InvertSel"  list $ map $ over _2 not
                 ]
             , horizontally
                 [ smartButton (sel <&> \s -> "DelSel(" ++ show (length s) ++ ")") list $ filter $ not . snd
-                , smartButton (pure "CopySel") safeList $ concatMap $ \(x,b) -> (x,b): [(x,False) | b]
-                , smartButton (pure "Sel+1")     list $ map $ mapSel (+1)
-                , smartButton (pure "Sel-1")     list $ map $ mapSel (+(-1))
+                , smartButton "CopySel" safeList $ concatMap $ \(x,b) -> (x,b): [(x,False) | b]
+                , smartButton "Sel+1"     list $ map $ mapSel (+1)
+                , smartButton "Sel-1"     list $ map $ mapSel (+(-1))
                 ]
             , horizontally
                 [ dynLabel $ liftA2 ($) (readRef op) (sel <&> map fst) <&> show
@@ -473,13 +478,13 @@ intListEditor def maxi list_ range = do
         [ label $ show (i+1) ++ "."
         , entryShow (pure True) $ _1 `lensMap` r
         , button (readRef r <&> bool "unselect" "select" . snd) $ pure $ Just $ modRef (_2 `lensMap` r) not
-        , button (pure "Del")  $ pure $ Just $ modRef list $ \xs -> take i xs ++ drop (i+1) xs
-        , button (pure "Copy") $ pure $ Just $ modRef list $ \xs -> take (i+1) xs ++ drop i xs
+        , button "Del"  $ pure $ Just $ modRef list $ \xs -> take i xs ++ drop (i+1) xs
+        , button "Copy" $ pure $ Just $ modRef list $ \xs -> take (i+1) xs ++ drop i xs
         ]
 
     safeList = lens id (const $ take maxi) `lensMap` list
 
-    sel = fmap (filter snd) $ readRef list
+    sel = filter snd <$> readRef list
 
     len = joinRef $ readRef range <&> \r -> ll r `lensMap` safeList   -- todo
     ll :: Bool -> Lens' [(Integer, Bool)] Int
@@ -495,7 +500,7 @@ listEditor :: forall s a . WidgetContext s => a -> [Ref s a -> Widget s] -> Ref 
 listEditor _ [] _ = error "not enought editors for listEditor"
 listEditor def (ed: eds) r = do
     q <- extendRef r listLens (False, (def, []))
-    cell (fmap fst $ readRef q) $ \case
+    cell (fst <$> readRef q) $ \case
         False -> emptyWidget
         True -> vertically
             [ ed $ _2 . _1 `lensMap` q
@@ -526,7 +531,7 @@ undoTr
            )  -- ^ undo and redo actions
 undoTr eq r = do
     ku <- extendRef r (undoLens eq) ([], [])
-    let try f = fmap (fmap (writeRef ku) . f) $ readRef ku
+    let try f = fmap (writeRef ku) . f <$> readRef ku
     pure (try undo, try redo)
   where
     undo (x: xs@(_:_), ys) = Just (xs, x: ys)
