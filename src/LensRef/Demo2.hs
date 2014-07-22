@@ -368,8 +368,6 @@ class RefContext s => WidgetContext s where
     addControl     :: RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
     asyncWrite     :: Rational -> RefWriter s () -> RefCreator s ()
 
-type Doc = (Int, [String])
-
 data Action s
     = Click (RefWriter s ())             -- button and checkbox
     | Put   (String -> RefWriter s ())   -- entry
@@ -378,10 +376,10 @@ data Action s
 --------------------------------------------------------------------------------
 
 label :: WidgetContext s => String -> RefCreator s ()
-label s = addLayout $ pure ((), pure (length s, [color magenta s]))
+label s = addLayout $ pure ((), pure $ color magenta $ text s)
 
 padding :: WidgetContext s => RefCreator s a -> RefCreator s a
-padding w = addLayout $ (,) <$> w <*> (fmap (\(n, s) -> (n+4, map (color red "  | " ++) s)) <$> getLayout)
+padding w = addLayout $ (,) <$> w <*> (fmap padDoc <$> getLayout)
 
 dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
 dynLabel r = addControl (pure [Get r]) (pure bluebackground) $ (" " ++) . (++ " ") <$> r
@@ -406,25 +404,14 @@ primEntry active ok r = addControl
   where
     pad n s = replicate (n - length s) ' ' ++ s
 
+getLayout :: WidgetContext s => RefCreator s (RefReader s Doc)
+getLayout = fmap (foldr vcomp emptyDoc) <$> collectLayouts
+
 vertically :: WidgetContext s => RefCreator s a -> RefCreator s a
 vertically ms = addLayout $ (,) <$> ms <*> getLayout
 
-getLayout :: WidgetContext s => RefCreator s (RefReader s Doc)
-getLayout = fmap (foldr vert (0, [])) <$> collectLayouts
-  where
-    vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
-      where
-        k = max n m
-        pad n l = l ++ replicate n ' '
-
 horizontally :: WidgetContext s => RefCreator s a -> RefCreator s a
-horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr horiz (0, [])) <$> collectLayouts)
-  where
-    horiz (0, _) ys = ys
-    horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
-      where
-        h = max (length xs) (length ys)
-        ext n l = take h $ l ++ repeat (replicate n ' ')
+horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr hcomp emptyDoc) <$> collectLayouts)
 
 infix 1 `switch`
 
@@ -490,11 +477,8 @@ runWidget out buildwidget = do
                 f _ = pure []
             void $ onChange acts $ lift . setControlActions
             onRegionStatusChange_ $ \msg -> setControlActions <$> f msg
-            let n = show i
-            addLayout $ return $ (,) () $ do
-                c <- col
-                s <- name
-                return (length n + length s, [color c s ++ color yellow (map toSubscript n)])
+            addLayout $ return $ (,) () $
+                hcomp_ <$> (color <$> col <*> (text <$> name)) <*> (pure $ color yellow $ text $ map toSubscript $ show i)
         asyncWrite d _ | d < 0 = error "asyncWrite"
         asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ f d
           where
@@ -540,9 +524,43 @@ runWidget out buildwidget = do
             , \t -> runRefWriter (delay t) >> draw
             )
 
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
+type Doc = (Int, [String])
+
+emptyDoc :: Doc
+emptyDoc = (0, [])
+
+text :: String -> Doc
+text s = (length s, [s])
+
+color :: Color -> Doc -> Doc
+color c (n, ss) = (n, ["\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m" | s <- ss])
+
+vcomp :: Doc -> Doc -> Doc
+vcomp (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
+  where
+    k = max n m
+    pad n l = l ++ replicate n ' '
+
+hcomp :: Doc -> Doc -> Doc
+hcomp (0, _) d2 = d2
+hcomp d1 d2 = d1 `hcomp_` (text " " `hcomp_` d2)
+
+hcomp_ :: Doc -> Doc -> Doc
+hcomp_ (n, xs) (m, ys) = (n + m, zipWith (++) (ext n xs) (ext m ys))
+  where
+    h = max (length xs) (length ys)
+    ext n l = take h $ l ++ repeat (replicate n ' ')
+
+padDoc :: Doc -> Doc
+padDoc d = color red (foldr vcomp emptyDoc $ replicate (height d) $ text "  |") `hcomp` d
+
+height :: Doc -> Int
+height (_, l) = length l
+
+------------------------------------------
 
 type Color = Int
 
@@ -556,11 +574,8 @@ redbackground   = 41
 greenbackground = 42
 bluebackground  = 44
 
-color :: Color -> String -> String
-color (-1) s = s
-color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
-
----------------------
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 bool a _ True = a
 bool _ b False = b
