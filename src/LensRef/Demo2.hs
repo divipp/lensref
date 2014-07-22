@@ -218,12 +218,11 @@ horiz_ l = sequence l <&> foldr horiz (0, [])
         h = max (length xs) (length ys)
         ext n l = take h $ l ++ repeat (replicate n ' ')
 
-cell :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s ()) -> RefCreator s ()
-cell r f = addLayout $ onChangeMemo r g <&> (,) () . join
+cell :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s b) -> RefCreator s (RefReader s b)
+cell r f = addLayout $ onChangeMemo r g <&> h
   where
-    g v = do
-        f v
-        getLayout <&> pure
+    g v = return <$> ((,) <$> f v <*> getLayout)
+    h v = (v <&> fst, join $ v <&> snd)
 
 --------------------------------------------------------------------------------
 
@@ -247,7 +246,7 @@ notebook m = do
             [ primButton (pure s) (Just $ readRef i <&> bool 32 37 . (== n)) (pure True) $ writeRef i n
             | (n, (s,_)) <- zip [0..] ws
             ]
-        padding $ cell (readRef i) $ \i -> snd (ws !! i)
+        padding $ void $ cell (readRef i) $ \i -> snd (ws !! i)
 
 item :: WidgetContext s => String -> RefCreator s () -> NoteBookBuilder s
 item s m = tell [(s, vertically m)]
@@ -340,7 +339,7 @@ booker = do
     booked       <- newRef False
     startdate    <- newRef (0 :: Time)
     maybeenddate <- newRef (Nothing :: Maybe Time)
-    cell (readRef booked) $ \case
+    void $ cell (readRef booked) $ \case
       True -> do
         -- view
         let showbooking i (Just j) = "You have booked a return flight on " ++ show i ++ "-" ++ show j
@@ -425,7 +424,7 @@ crud = do
 ---------------
 
 listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, String)] -> RefCreator s ()
-listbox sel as = cell (as <&> null) $ \case
+listbox sel as = void $ cell (as <&> null) $ \case
     True -> return ()
     False -> vertically $ do
         primButton (as <&> snd . head)
@@ -514,7 +513,7 @@ listEditor :: forall s a . WidgetContext s => a -> [Ref s a -> RefCreator s ()] 
 listEditor _ [] _ = error "not enought editors for listEditor"
 listEditor def (ed: eds) r = do
     q <- extendRef r listLens (False, (def, []))
-    cell (fst <$> readRef q) $ \case
+    void $ cell (fst <$> readRef q) $ \case
         False -> return ()
         True -> vertically $ do
             ed $ _2 . _1 `lensMap` q
