@@ -1,10 +1,12 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 module LensRef.Demo2 where
 
 import Numeric
@@ -46,9 +48,9 @@ temperatureConverter = do
     let fahrenheit = multiplying 1.8 . adding 32 `lensMap` celsius
     -- view
     horizontally $ do
-        void $ entryShow (pure True) celsius
+        void $ entryShow celsius
         label "Celsius = "
-        void $ entryShow (pure True) fahrenheit
+        void $ entryShow fahrenheit
         label "Fahrenheit"
 
 ---------------
@@ -72,28 +74,31 @@ booker = do
     maybeenddate <- newRef (Nothing :: Maybe Time)
     boolenddate  <- extendRef maybeenddate maybeLens (False, 0)
     let isreturn = lensMap _1 boolenddate
-        bookaction ok = f <$> readRef startdate <*> readRef maybeenddate <*> ok
-          where
-            f _ _        False     = Nothing
-            f i (Just j) _ | i > j = Nothing
-            f _ _        _         = Just $ writeRef booked True
+        bookaction parseok = do
+            ok    <- parseok
+            start <- readRef startdate
+            end   <- readRef maybeenddate
+            return $ (ok && maybe True (start <=) end, writeRef booked True) ^. maybeLens
     -- view
-    void $ cell (readRef booked) $ \case
-      True -> do
-        let showbooking i (Just j) = "You have booked a return flight on " ++ show i ++ "-" ++ show j
-            showbooking i _        = "You have booked a one-way flight on " ++ show i
-        dynLabel $ showbooking <$> readRef startdate <*> readRef maybeenddate
+    void $ readRef booked `switch` \case
+      True -> dynLabel $ do
+        start <- readRef startdate
+        readRef maybeenddate <&> \case
+            Just end -> "You have booked a return flight on " ++ show start ++ "-" ++ show end
+            Nothing  -> "You have booked a one-way flight on " ++ show start
       False -> do
-        combobox [("one-way flight", False), ("return flight", True)] isreturn
-        startok <- entryShow (pure True) startdate
-        endok   <- entryShow (readRef isreturn) $ lensMap _2 boolenddate
+        combobox isreturn $ do
+            item False "one-way flight"
+            item True  "return flight"
+        startok <- entryShow startdate
+        endok   <- entryShowActive (readRef isreturn) $ lensMap _2 boolenddate
         button "Book" $ bookaction $ (&&) <$> startok <*> endok
 
 ----------
 
 maybeLens :: Lens' (Bool, a) (Maybe a)
 maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
-                 (\(_,a) -> maybe (False, a) (\a' -> (True, a')))
+                 (\(_,a) -> maybe (False, a) ((,) True))
 
 --------------------------------------------------------------------------------
 
@@ -110,16 +115,16 @@ timer = do
     void $ onChange ratio $ const $ do
         t <- readerToCreator $ readRef elapsed
         d <- readerToCreator $ readRef duration
-        when (t < d) $ asyncWrite (1/fps) $ writeRef elapsed $ min d $ t + 1/realToFrac fps
+        when (t < d) $ asyncWrite (1/fps) $ modRef elapsed $ min d . (+ 1/realToFrac fps)
     -- view
     vertically $ do
         horizontally $ do
-            label "Elapsed Time: "
+            label "Elapsed Time:"
             dynLabel $ (++"%") . show . (*100) <$> ratio
         dynLabel $ (++"s") . show <$> readRef elapsed
         horizontally $ do
-            label "Duration: "
-            void $ entryShow (pure True) duration
+            label "Duration:"
+            void $ entryShow duration
         button "Reset" $ pure $ Just reset
 
 --------------------------------------------------------------------------------
@@ -156,9 +161,9 @@ crud = do
 ---------------
 
 listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, String)] -> RefCreator s ()
-listbox sel as = void $ cell (null <$> as) $ \case
-    True -> return ()
-    False -> vertically $ do
+listbox sel as = void $ (null <$> as) `switch` \case
+    True  -> return ()
+    False -> do
         primButton (snd . head <$> as)
                    (Just $ (as <&> \x -> maybe grey (bool green grey . (== fst (head x)))) <*> readRef sel)
                    (pure True)
@@ -185,12 +190,12 @@ intListEditor def maxi list_ range = do
     (undo, redo)  <- undoTr ((==) `on` map fst) list_
     op <- newRef sum
     notebook $ do
-        nameditem "Editor" $ do
+        item "Editor" $ do
             horizontally $ do
                 button "Undo" undo
                 button "Redo" redo
             horizontally $ do
-                void $ entryShow (pure True) len
+                void $ entryShow len
                 label "items"
                 smartButton "AddItem" len (+1)
                 smartButton "RemoveItem" len (+(-1))
@@ -213,7 +218,7 @@ intListEditor def maxi list_ range = do
                 dynLabel $ show <$> (readRef op <*> (map fst <$> sel))
                 label "selected sum"
             padding $ listEditor def (map itemEditor [0..]) list_
-        nameditem "Settings" $ horizontally $ do
+        item "Settings" $ horizontally $ do
             label "create range"
             checkbox range
  where
@@ -222,7 +227,7 @@ intListEditor def maxi list_ range = do
     itemEditor :: Int -> Ref s (Integer, Bool) -> RefCreator s ()
     itemEditor i r = horizontally $ do
         label $ show (i+1) ++ "."
-        void $ entryShow (pure True) $ _1 `lensMap` r
+        void $ entryShow $ _1 `lensMap` r
         button (bool "unselect" "select" . snd <$> readRef r) $ pure $ Just $ modRef (_2 `lensMap` r) not
         button "Del"  $ pure $ Just $ modRef list $ \xs -> take i xs ++ drop (i+1) xs
         button "Copy" $ pure $ Just $ modRef list $ \xs -> take (i+1) xs ++ drop i xs
@@ -247,9 +252,9 @@ listEditor :: WidgetContext s => a -> [Ref s a -> RefCreator s ()] -> Ref s [a] 
 listEditor _ [] _ = error "not enought editors for listEditor"
 listEditor def (ed: eds) r = do
     q <- extendRef r listLens (False, (def, []))
-    void $ cell (fst <$> readRef q) $ \case
+    void $ (fst <$> readRef q) `switch` \case
         False -> return ()
-        True -> vertically $ do
+        True  -> do
             ed $ _2 . _1 `lensMap` q
             listEditor def eds $ _2 . _2 `lensMap` q
 
@@ -292,11 +297,9 @@ undoLens eq = lens get set where
 checkbox :: WidgetContext s => Ref s Bool -> RefCreator s ()
 checkbox r = primButton (show <$> readRef r) Nothing (pure True) $ modRef r not
 
-combobox :: (WidgetContext s, Eq a) => [(String, a)] -> Ref s a -> RefCreator s ()
-combobox as i = horizontally $ sequence_
-    [ primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
-    | (s, n) <- as
-    ]
+combobox :: (WidgetContext s, Eq a) => Ref s a -> Writer [(a, String)] () -> RefCreator s ()
+combobox i as = horizontally $ forM_ (execWriter as) $ \(n, s) ->
+    primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
 
 -- | Button.
 button
@@ -321,8 +324,10 @@ smartButton s r f
 entry :: WidgetContext s => Ref s String -> RefCreator s ()
 entry = primEntry (pure True) (pure True)
 
-entryShow :: (Show a, Read a, RefClass r, WidgetContext s) => RefReader s Bool -> r s a -> RefCreator s (RefReader s Bool)
-entryShow active r = do
+entryShow = entryShowActive (pure True)
+
+entryShowActive :: (Show a, Read a, RefClass r, WidgetContext s) => RefReader s Bool -> r s a -> RefCreator s (RefReader s Bool)
+entryShowActive active r = do
     x <- readerToCreator $ readRef r
     v <- extendRef (toRef r) (lens fst set') (x, Nothing)
     let ok = isNothing . snd <$> readRef v
@@ -339,33 +344,29 @@ entryShow active r = do
         ((x,""):_) -> (x, Nothing)
         _ -> (v, Just s)
 
-type NamedWidgets s = WriterT [(String, RefCreator s ())] (RefCreator s) ()
+type NamedWidgets s = WriterT [(String, RefCreator s ())] (RefCreator s)
 
-notebook :: WidgetContext s => NamedWidgets s -> RefCreator s ()
+notebook :: WidgetContext s => NamedWidgets s () -> RefCreator s ()
 notebook m = do
     ws <- execWriterT m
     i <- newRef (0 :: Int)
     vertically $ do
-        horizontally $ sequence_
-            [ primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
-            | (n, (s,_)) <- zip [0..] ws
-            ]
-        padding $ void $ cell (readRef i) $ \i -> snd (ws !! i)
+        horizontally $ forM_ (zip [0..] ws) $ \(n, (s, _)) ->
+            primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
+        padding $ void $ readRef i `switch` snd . (ws !!)
 
-nameditem :: WidgetContext s => String -> RefCreator s () -> NamedWidgets s
-nameditem s m = tell [(s, vertically m)]
+item :: MonadWriter [(a, b)] m => a -> b -> m ()
+item s m = tell [(s, m)]
 
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 
 class RefContext s => WidgetContext s where
-    addLayout      :: RefCreator s (a, Layout s) -> RefCreator s a
-    collectLayouts :: RefCreator s [Layout s]
+    addLayout      :: RefCreator s (a, RefReader s Doc) -> RefCreator s a
+    collectLayouts :: RefCreator s (RefReader s [Doc])
     addControl     :: RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
     asyncWrite     :: Rational -> RefWriter s () -> RefCreator s ()
-
-type Layout s = RefReader s Doc
 
 type Doc = (Int, [String])
 
@@ -398,39 +399,37 @@ primButton name col vis act =
          name
 
 primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> RefCreator s ()
-primEntry active ok r =
-    addControl (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
-         (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
-         (pad 7 . (++ " ") <$> readRef r)
+primEntry active ok r = addControl
+        (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
+        (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
+        (pad 7 . (++ " ") <$> readRef r)
   where
     pad n s = replicate (n - length s) ' ' ++ s
 
 vertically :: WidgetContext s => RefCreator s a -> RefCreator s a
 vertically ms = addLayout $ (,) <$> ms <*> getLayout
 
-getLayout :: WidgetContext s => RefCreator s (Layout s)
-getLayout = vert_ <$> collectLayouts
+getLayout :: WidgetContext s => RefCreator s (RefReader s Doc)
+getLayout = fmap (foldr vert (0, [])) <$> collectLayouts
   where
-    vert_ l = foldr vert (0, []) <$> sequence l
+    vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
       where
-        vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
-          where
-            k = max n m
-            pad n l = l ++ replicate n ' '
+        k = max n m
+        pad n l = l ++ replicate n ' '
 
 horizontally :: WidgetContext s => RefCreator s a -> RefCreator s a
-horizontally ms = addLayout $ (,) <$> ms <*> (horiz_ <$> collectLayouts)
+horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr horiz (0, [])) <$> collectLayouts)
   where
-    horiz_ l = foldr horiz (0, []) <$> sequence l
+    horiz (0, _) ys = ys
+    horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
       where
-        horiz (0, _) ys = ys
-        horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
-          where
-            h = max (length xs) (length ys)
-            ext n l = take h $ l ++ repeat (replicate n ' ')
+        h = max (length xs) (length ys)
+        ext n l = take h $ l ++ repeat (replicate n ' ')
 
-cell :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s b) -> RefCreator s (RefReader s b)
-cell r f = addLayout $ h <$> onChangeMemo r g
+infix 1 `switch`
+
+switch :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s b) -> RefCreator s (RefReader s b)
+switch r f = addLayout $ h <$> onChangeMemo r g
   where
     g v = return <$> ((,) <$> f v <*> getLayout)
     h v = (fst <$> v, join $ snd <$> v)
@@ -444,7 +443,7 @@ type WContext m = ReaderT (WidgetContextDict m) m
 data WidgetContextDict m = WidgetContextDict
     { addControlDict   :: RegisterControl (WContext m)
     , asyncWriteDict   :: Rational -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
-    , widgetCollection :: SimpleRef m [Layout (WContext m)]
+    , widgetCollection :: SimpleRef m [RefReader (WContext m) Doc]
     }
 
 type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
@@ -464,7 +463,7 @@ instance RefContext m => WidgetContext (WContext m) where
         return a
     collectLayouts = do
         c <- lift $ asks widgetCollection
-        lift $ modSimpleRef c $ state $ \s -> (reverse s, [])
+        lift $ modSimpleRef c $ state $ \s -> (sequence $ reverse s, [])
 
 --run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
 run = runWidget (putStr . unlines) . padding
