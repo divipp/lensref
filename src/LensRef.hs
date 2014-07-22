@@ -1110,7 +1110,7 @@ mergeBy p (x:xs) (y:ys) = case p x y of
 data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 
 
-instance RefContext s => IsString (RefReader s String) where
-    fromString = pure
+instance (IsString str, RefContext s) => IsString (RefReader s str) where
+    fromString = pure . fromString
 
 
