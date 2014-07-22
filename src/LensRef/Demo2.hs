@@ -10,6 +10,7 @@
 module LensRef.Demo2 where
 
 import Numeric (showFFloat)
+import Data.String (IsString (..))
 import Data.Function (on)
 import Data.List (isPrefixOf, sortBy)
 import Data.Maybe (fromMaybe, listToMaybe, isJust, isNothing)
@@ -363,25 +364,24 @@ label :: WidgetContext s => String -> RefCreator s ()
 label s = addLayout $ pure ((), pure $ color magenta $ text s)
 
 dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
-dynLabel r = addControl (pure [Get r]) (pure bluebackground) $ (" " ++) . (++ " ") <$> r
+dynLabel r = addControl (pure [Get r]) $ color bluebackground <$> (text . (" " ++) . (++ " ") <$> r)
 
 primButton
     :: WidgetContext s
     => RefReader s String     -- ^ dynamic label of the button
     -> Maybe (RefReader s Color)
     -> RefReader s Bool       -- ^ the button is active when this returns @True@
-    -> RefWriter s ()        -- ^ the action to do when the button is pressed
+    -> RefWriter s ()         -- ^ the action to do when the button is pressed
     -> RefCreator s ()
-primButton name col vis act = addControl
-    (vis <&> \case True -> [Click act, Get name]; False -> [])
-    (fromMaybe (pure grey) col >>= \c -> bool c magenta <$> vis)
-    name
+primButton name col vis act
+    = addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
+        $ color <$> (fromMaybe (pure grey) col >>= \c -> bool c magenta <$> vis) <*> fmap text name
 
 primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> RefCreator s ()
-primEntry active ok r = addControl
-    (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
-    (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
-    (pad 7 . (++ " ") <$> readRef r)
+primEntry active ok r
+    = addControl (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
+        $ color <$> (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
+                <*> (text . pad 7 . (++ " ") <$> readRef r)
   where
     pad n s = replicate (n - length s) ' ' ++ s
 
@@ -396,7 +396,6 @@ horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr hcomp emptyDoc) <$> co
 
 getLayout :: WidgetContext s => RefCreator s (RefReader s Doc)
 getLayout = fmap (foldr vcomp emptyDoc) <$> collectLayouts
-
 
 infix 1 `switch`
 
@@ -413,7 +412,7 @@ switch r f = addLayout $ h <$> onChangeMemo r g
 class RefContext s => WidgetContext s where
     addLayout      :: RefCreator s (a, RefReader s Doc) -> RefCreator s a
     collectLayouts :: RefCreator s (RefReader s [Doc])
-    addControl     :: RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
+    addControl     :: RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
     asyncWrite     :: Rational -> RefWriter s () -> RefCreator s ()
 
 data Action s
@@ -432,12 +431,12 @@ data WidgetContextDict m = WidgetContextDict
     , widgetCollection :: SimpleRef m (RefReader (WContext m) [Doc])
     }
 
-type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
+type RegisterControl s = RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
 
 instance RefContext m => WidgetContext (WContext m) where
-    addControl acts col name = do
+    addControl acts name = do
         f <- lift $ asks addControlDict
-        f acts col name
+        f acts name
     asyncWrite d w = do
         f <- lift $ asks asyncWriteDict
         f d w
@@ -469,7 +468,7 @@ runWidget out buildwidget = do
     currentview    <- newSimpleRef emptyDoc
     collection     <- newSimpleRef $ pure []
 
-    let addControl acts col name = do
+    let addControl acts name = do
             i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
             let setControlActions cs = modSimpleRef controlmap $ modify $ case cs of
                     [] -> Map.delete i
@@ -479,7 +478,7 @@ runWidget out buildwidget = do
             void $ onChange acts $ lift . setControlActions
             onRegionStatusChange_ $ \msg -> setControlActions <$> f msg
             addLayout $ return $ (,) () $
-                hcomp_ <$> (color <$> col <*> (text <$> name)) <*> (pure $ color yellow $ text $ map toSubscript $ show i)
+                hcomp_ <$> name <*> (pure $ color yellow $ text $ map toSubscript $ show i)
         asyncWrite d _ | d < 0 = error "asyncWrite"
         asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ f d
           where
@@ -529,6 +528,9 @@ runWidget out buildwidget = do
 --------------------------------------------------------------------------------
 
 data Doc = Doc Int [String] deriving Eq
+
+instance IsString Doc where
+    fromString = text
 
 height :: Doc -> Int
 height (Doc _ l) = length l
