@@ -362,34 +362,31 @@ timer = do
 
 crud :: WidgetContext s => Widget s
 crud = do
+--------- model
     names <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
     name  <- newRef ("Romba", "John")
     psel  <- newRef ("", Nothing)
     let prefix = lensMap (iso fst (\i->(i,Nothing))) psel
         sel    = lensMap _2 psel
-        update s i = modRef names $ \l -> take i l ++ [s] ++ drop (i+1) l
+        create = do
+            n <- readerToWriter $ readRef name
+            modRef names (++ [n])
+        update s i =
+            modRef names $ \l -> take i l ++ [s] ++ drop (i+1) l
         delete i = do
             modRef names $ \l -> take i l ++ drop (i+1) l
             writeRef sel Nothing
-        filterfun = readRef prefix <&> \p -> filter (isPrefixOf p . fst . snd)
+        filterednames
+            =   (readRef prefix <&> \p -> filter (isPrefixOf p . fst . snd))
+            <*> (readRef names <&> zip [0..])
+--------- view
     vertically
-        [ horizontally
-            [ label "Filter prefix:"
-            , entry prefix
-            ]
-        , listbox sel $ (filterfun <*> (zip [0..] <$> readRef names)) <&> map (\(i, (s, n)) -> (i, s ++ ", " ++ n))
+        [ horizontally [ label "Filter prefix:", entry prefix ]
+        , listbox sel $ filterednames <&> map (\(i, (s, n)) -> (i, s ++ ", " ++ n))
+        , horizontally [ label "Name:",    entry $ lensMap _2 name ]
+        , horizontally [ label "Surname:", entry $ lensMap _1 name ]
         , horizontally
-            [ label "Name:"
-            , entry $ lensMap _2 name
-            ]
-        , horizontally
-            [ label "Surname:"
-            , entry $ lensMap _1 name
-            ]
-        , horizontally
-            [ button (pure "Create") $ pure $ Just $ do
-                n <- readerToWriter $ readRef name
-                modRef names (++ [n])
+            [ button (pure "Create") $ pure $ Just create
             , button (pure "Update") $ fmap <$> (update <$> readRef name) <*> readRef sel
             , button (pure "Delete") $ fmap delete <$> readRef sel
             ]
