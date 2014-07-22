@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 module LensRef.Demo2 where
 
 import Numeric
@@ -120,17 +121,15 @@ runWidget out cw = do
 
             drawLast = modSimpleRef currentview (state $ \s -> (s, [])) >>= out
 
-            delay d = do
-                as <- lift $ readSimpleRef delayedactions
-                case as of
-                    [] -> return ()
-                    ((d1, w1): as)
-                        | d1 <= d -> do
-                            lift $ writeSimpleRef delayedactions as
-                            w1
-                            delay (d-d1)
-                        | otherwise ->
-                            lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
+            delay d = lift (readSimpleRef delayedactions) >>= \case
+                [] -> return ()
+                ((d1, w1): as)
+                    | d1 <= d -> do
+                        lift $ writeSimpleRef delayedactions as
+                        w1
+                        delay (d-d1)
+                    | otherwise ->
+                        lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
 
         lift $ lift $ drawLast
         return
@@ -159,15 +158,15 @@ primButton
     -> RefWriter s ()        -- ^ the action to do when the button is pressed
     -> Widget s
 primButton name col vis act =
-    registerControl (vis <&> \v -> if v then [Click act, Get name] else [])
+    registerControl (vis <&> \case True -> [Click act, Get name]; False -> [])
          (fromMaybe (pure 37) col >>= \c -> vis <&> bool c 35)
          name
 
 primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> Widget s
 primEntry active ok r =
-    registerControl (active <&> \v -> if v then [Put $ writeRef r, Get $ readRef r] else [])
+    registerControl (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
          (active >>= bool (ok <&> bool 42 41) (pure 35))
-         (readRef r <&> \s -> pad 7 s ++ " ")
+         (readRef r <&> pad 7 . (++ " "))
   where
     pad n s = replicate (n - length s) ' ' ++ s
 
@@ -304,12 +303,12 @@ booker = do
     booked       <- newRef False
     startdate    <- newRef (0 :: Time)
     maybeenddate <- newRef (Nothing :: Maybe Time)
-    cell (readRef booked) $ \b -> if b
-      then do
+    cell (readRef booked) $ \case
+      True -> do
         let showbooking i (Just j) = "You have booked a return flight on " ++ show i ++ "-" ++ show j
             showbooking i _        = "You have booked a one-way flight on " ++ show i
         dynLabel $ showbooking <$> readRef startdate <*> readRef maybeenddate
-      else do
+      False -> do
         boolenddate <- extendRef maybeenddate maybeLens (False, 0)
         let isreturn = lensMap _1 boolenddate
             enddate  = lensMap _2 boolenddate
@@ -396,17 +395,15 @@ crud = do
 
 listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, String)] -> Widget s
 listbox sel as = do
-    cell (as <&> not . null) $ \b -> case b of
-        False -> emptyWidget
-        True -> vertically
-            [ primButton (as <&> snd . head)
-                         (Just $ col <$> (as <&> fst . head) <*> readRef sel)
-                         (pure True)
-                         (writeRef sel . Just . fst . head =<< readerToWriter as)
-            , listbox sel (as <&> drop 1)    -- TODO: should work with tail instead of drop 1
-            ]
-  where
-    col i = maybe 37 (bool 32 37 . (== i))
+    cell (as <&> null) $ \case
+      True -> emptyWidget
+      False -> vertically
+        [ primButton (as <&> snd . head)
+                     (Just $ (as <&> \x -> maybe 37 (bool 32 37 . (== fst (head x)))) <*> readRef sel)
+                     (pure True)
+                     (writeRef sel . Just . fst . head =<< readerToWriter as)
+        , listbox sel (as <&> drop 1)    -- TODO: should work with tail instead of drop 1
+        ]
 
 --------------------------------------------------------------------------------
 
@@ -498,7 +495,7 @@ listEditor :: forall s a . WidgetContext s => a -> [Ref s a -> Widget s] -> Ref 
 listEditor _ [] _ = error "not enought editors for listEditor"
 listEditor def (ed: eds) r = do
     q <- extendRef r listLens (False, (def, []))
-    cell (fmap fst $ readRef q) $ \b -> case b of
+    cell (fmap fst $ readRef q) $ \case
         False -> emptyWidget
         True -> vertically
             [ ed $ _2 . _1 `lensMap` q
