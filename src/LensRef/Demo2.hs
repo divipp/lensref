@@ -49,6 +49,7 @@ type Color = Int
 red, green, magenta, grey, redbackground, greenbackground, bluebackground :: Color
 red     = 31
 green   = 32
+yellow  = 33
 magenta = 35
 grey    = 37
 redbackground   = 41
@@ -61,17 +62,15 @@ color c s = "\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m"
 
 --------------------------------------------------------------------------------
 
+type WContext m = ReaderT (WidgetContextDict m) m
+
 data WidgetContextDict m = WidgetContextDict
     { registerControlDict :: RegisterControl (WContext m)
-    , asyncWriteDict      :: AsyncWrite (WContext m)
+    , asyncWriteDict      :: Rational -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
     , collDict            :: SimpleRef m [Layout (WContext m)]
     }
 
 type RegisterControl s = RefReader s [Action s] -> RefReader s Color -> RefReader s String -> RefCreator s ()
-
-type AsyncWrite s = Rational -> RefWriter s () -> RefCreator s ()
-
-type WContext m = ReaderT (WidgetContextDict m) m
 
 instance RefContext m => WidgetContext (WContext m) where
     addControl acts col name = do
@@ -89,9 +88,6 @@ instance RefContext m => WidgetContext (WContext m) where
     collectLayouts = do
         c <- lift $ asks collDict
         lift $ modSimpleRef c $ state $ \s -> (reverse s, [])
-
-getLayout :: WidgetContext s => RefCreator s (Layout s)
-getLayout = collectLayouts <&> vert_
 
 --run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
 run = runWidget (putStr . unlines) . padding
@@ -122,7 +118,7 @@ runWidget out cw = do
             addLayout $ return $ (,) () $ do
                 c <- col
                 s <- name
-                return (length n + length s, [color c s ++ color red (map toSubscript n)])
+                return (length n + length s, [color c s ++ color yellow (map toSubscript n)])
         asyncWrite d _ | d < 0 = error "asyncWrite"
         asyncWrite d w = lift $ modSimpleRef delayedactions $ modify $ f d
           where
@@ -172,10 +168,10 @@ runWidget out cw = do
 --------------------------------------------------------------------------------
 
 label :: WidgetContext s => String -> RefCreator s ()
-label s = addLayout $ return ((), pure (length s, [color magenta s]))
+label s = addLayout $ pure ((), pure (length s, [color magenta s]))
 
 padding :: WidgetContext s => RefCreator s a -> RefCreator s a
-padding w = addLayout $ (,) <$> w <*> (getLayout <&> fmap (\(n, s) -> (n+2, map ("  | " ++) s)))
+padding w = addLayout $ (,) <$> w <*> (getLayout <&> fmap (\(n, s) -> (n+4, map (color red "  | " ++) s)))
 
 dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
 dynLabel r = addControl (pure [Get r]) (pure bluebackground) (r <&> \s -> " " ++ s ++ " ")
@@ -203,23 +199,26 @@ primEntry active ok r =
 vertically :: WidgetContext s => RefCreator s a -> RefCreator s a
 vertically ms = addLayout $ (,) <$> ms <*> getLayout
 
-vert_ l = sequence l <&> foldr vert (0, [])
+getLayout :: WidgetContext s => RefCreator s (Layout s)
+getLayout = collectLayouts <&> vert_
   where
-    vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
+    vert_ l = sequence l <&> foldr vert (0, [])
       where
-        k = max n m
-        pad n l = l ++ replicate n ' '
+        vert (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
+          where
+            k = max n m
+            pad n l = l ++ replicate n ' '
 
 horizontally :: WidgetContext s => RefCreator s a -> RefCreator s a
 horizontally ms = addLayout $ (,) <$> ms <*> (collectLayouts <&> horiz_)
-
-horiz_ l = sequence l <&> foldr horiz (0, [])
   where
-    horiz (0, _) ys = ys
-    horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
+    horiz_ l = sequence l <&> foldr horiz (0, [])
       where
-        h = max (length xs) (length ys)
-        ext n l = take h $ l ++ repeat (replicate n ' ')
+        horiz (0, _) ys = ys
+        horiz (n, xs) (m, ys) = (n + m + 1, zipWith (++) (ext n xs) (map (' ':) $ ext m ys))
+          where
+            h = max (length xs) (length ys)
+            ext n l = take h $ l ++ repeat (replicate n ' ')
 
 cell :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s b) -> RefCreator s (RefReader s b)
 cell r f = addLayout $ onChangeMemo r g <&> h
