@@ -50,6 +50,7 @@ module LensRef
     ) where
 
 import Data.Maybe
+import Data.String
 import Control.Applicative
 import Control.Monad.State.Strict
 import Control.Monad.Identity
@@ -1107,5 +1108,9 @@ mergeBy p (x:xs) (y:ys) = case p x y of
 
 -- | TODO
 data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
+
+
+instance RefContext s => IsString (RefReader s String) where
+    fromString = pure
 
 

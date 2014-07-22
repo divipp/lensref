@@ -8,7 +8,6 @@
 module LensRef.Demo2 where
 
 import Numeric
-import Data.String
 import Data.Monoid
 import Data.Function
 import Data.List
@@ -25,11 +24,6 @@ import Lens.Family2.Unchecked
 
 import LensRef.Context
 import LensRef.EqRef
-
---------------------------------------------------------------------------------
-
-instance RefContext s => IsString (RefReader s String) where
-    fromString = pure
 
 --------------------------------------------------------------------------------
 
