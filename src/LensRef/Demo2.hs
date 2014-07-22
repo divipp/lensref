@@ -9,14 +9,12 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module LensRef.Demo2 where
 
-import Numeric
-import Data.Monoid
-import Data.Function
-import Data.List
-import Data.Maybe
+import Numeric (showFFloat)
+import Data.Function (on)
+import Data.List (isPrefixOf, sortBy)
+import Data.Maybe (fromMaybe, listToMaybe, isJust, isNothing)
 import qualified Data.IntMap as Map
-import Control.Applicative
-import Control.Monad
+import Control.Applicative (pure, (<*>), (<$>), liftA2)
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -29,6 +27,7 @@ import LensRef.EqRef
 
 --------------------------------------------------------------------------------
 
+-- | Try in ghci as `(click, put, get, delay) <- run counter`
 counter :: WidgetContext s => RefCreator s ()
 counter = do
     -- model
@@ -308,7 +307,7 @@ button
     -> RefReader s (Maybe (RefWriter s ()))     -- ^ when the @Maybe@ readRef is @Nothing@, the button is inactive
     -> RefCreator s ()
 button r fm
-    = primButton r Nothing (fmap isJust fm) $ readerToWriter fm >>= fromMaybe (pure ())
+    = primButton r Nothing (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
 
 -- | Button which inactivates itself automatically.
 smartButton
@@ -358,6 +357,55 @@ notebook m = do
 item :: MonadWriter [(a, b)] m => a -> b -> m ()
 item s m = tell [(s, m)]
 
+--------------------------------------------------------------------------------
+
+label :: WidgetContext s => String -> RefCreator s ()
+label s = addLayout $ pure ((), pure $ color magenta $ text s)
+
+dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
+dynLabel r = addControl (pure [Get r]) (pure bluebackground) $ (" " ++) . (++ " ") <$> r
+
+primButton
+    :: WidgetContext s
+    => RefReader s String     -- ^ dynamic label of the button
+    -> Maybe (RefReader s Color)
+    -> RefReader s Bool       -- ^ the button is active when this returns @True@
+    -> RefWriter s ()        -- ^ the action to do when the button is pressed
+    -> RefCreator s ()
+primButton name col vis act = addControl
+    (vis <&> \case True -> [Click act, Get name]; False -> [])
+    (fromMaybe (pure grey) col >>= \c -> bool c magenta <$> vis)
+    name
+
+primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> RefCreator s ()
+primEntry active ok r = addControl
+    (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
+    (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
+    (pad 7 . (++ " ") <$> readRef r)
+  where
+    pad n s = replicate (n - length s) ' ' ++ s
+
+padding :: WidgetContext s => RefCreator s a -> RefCreator s a
+padding w = addLayout $ (,) <$> w <*> (fmap padDoc <$> getLayout)
+
+vertically :: WidgetContext s => RefCreator s a -> RefCreator s a
+vertically ms = addLayout $ (,) <$> ms <*> getLayout
+
+horizontally :: WidgetContext s => RefCreator s a -> RefCreator s a
+horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr hcomp emptyDoc) <$> collectLayouts)
+
+getLayout :: WidgetContext s => RefCreator s (RefReader s Doc)
+getLayout = fmap (foldr vcomp emptyDoc) <$> collectLayouts
+
+
+infix 1 `switch`
+
+switch :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s b) -> RefCreator s (RefReader s b)
+switch r f = addLayout $ h <$> onChangeMemo r g
+  where
+    g v = return <$> ((,) <$> f v <*> getLayout)
+    h v = (fst <$> v, join $ snd <$> v)
+
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -372,55 +420,6 @@ data Action s
     = Click (RefWriter s ())             -- button and checkbox
     | Put   (String -> RefWriter s ())   -- entry
     | Get   (RefReader s String)         -- entry and dynamic label
-
---------------------------------------------------------------------------------
-
-label :: WidgetContext s => String -> RefCreator s ()
-label s = addLayout $ pure ((), pure $ color magenta $ text s)
-
-padding :: WidgetContext s => RefCreator s a -> RefCreator s a
-padding w = addLayout $ (,) <$> w <*> (fmap padDoc <$> getLayout)
-
-dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
-dynLabel r = addControl (pure [Get r]) (pure bluebackground) $ (" " ++) . (++ " ") <$> r
-
-primButton
-    :: WidgetContext s
-    => RefReader s String     -- ^ dynamic label of the button
-    -> Maybe (RefReader s Color)
-    -> RefReader s Bool       -- ^ the button is active when this returns @True@
-    -> RefWriter s ()        -- ^ the action to do when the button is pressed
-    -> RefCreator s ()
-primButton name col vis act =
-    addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
-         (fromMaybe (pure grey) col >>= \c -> bool c magenta <$> vis)
-         name
-
-primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> RefCreator s ()
-primEntry active ok r = addControl
-        (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
-        (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
-        (pad 7 . (++ " ") <$> readRef r)
-  where
-    pad n s = replicate (n - length s) ' ' ++ s
-
-getLayout :: WidgetContext s => RefCreator s (RefReader s Doc)
-getLayout = fmap (foldr vcomp emptyDoc) <$> collectLayouts
-
-vertically :: WidgetContext s => RefCreator s a -> RefCreator s a
-vertically ms = addLayout $ (,) <$> ms <*> getLayout
-
-horizontally :: WidgetContext s => RefCreator s a -> RefCreator s a
-horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr hcomp emptyDoc) <$> collectLayouts)
-
-infix 1 `switch`
-
-switch :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s b) -> RefCreator s (RefReader s b)
-switch r f = addLayout $ h <$> onChangeMemo r g
-  where
-    g v = return <$> ((,) <$> f v <*> getLayout)
-    h v = (fst <$> v, join $ snd <$> v)
-
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -452,8 +451,10 @@ instance RefContext m => WidgetContext (WContext m) where
         c <- lift $ asks widgetCollection
         lift $ modSimpleRef c $ state $ \s -> (reverse <$> s, pure [])
 
---run :: IO (Int -> IO (), Int -> String -> IO (), Int -> IO String)
-run = runWidget (putStr . unlines) . padding
+run, run'
+    :: RefCreator (WContext IO) ()
+    -> IO (Int -> IO (), Int -> String -> IO (), Int -> IO (), Rational -> IO ())
+run  = runWidget (putStr . unlines) . padding
 run' = runWidget (appendFile "out" . unlines) . padding
 
 runWidget
@@ -465,7 +466,7 @@ runWidget out buildwidget = do
     controlmap     <- newSimpleRef mempty
     controlcounter <- newSimpleRef 0
     delayedactions <- newSimpleRef mempty
-    currentview    <- newSimpleRef mempty
+    currentview    <- newSimpleRef emptyDoc
     collection     <- newSimpleRef $ pure []
 
     let addControl acts col name = do
@@ -501,12 +502,12 @@ runWidget out buildwidget = do
         lookup_ :: Int -> m [Action (WContext m)]
         lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
 
-        draw = modSimpleRef currentview (state $ \s -> (s, [])) >>= out
+        draw = modSimpleRef currentview (state $ \(Doc _ s) -> (s, emptyDoc)) >>= out
 
     flip runReaderT st $ runRefCreator $ \runRefWriter_ -> do
 
         buildwidget
-        layout <- fmap snd <$> getLayout
+        layout <- getLayout
         void $ onChangeEq layout $ lift . writeSimpleRef currentview
         lift $ lift draw
 
@@ -527,38 +528,38 @@ runWidget out buildwidget = do
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 
-type Doc = (Int, [String])
+data Doc = Doc Int [String] deriving Eq
+
+height :: Doc -> Int
+height (Doc _ l) = length l
 
 emptyDoc :: Doc
-emptyDoc = (0, [])
+emptyDoc = Doc 0 []
 
 text :: String -> Doc
-text s = (length s, [s])
+text s = Doc (length s) [s]
 
 color :: Color -> Doc -> Doc
-color c (n, ss) = (n, ["\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m" | s <- ss])
+color c (Doc n ss) = Doc n ["\x1b[" ++ show c ++ "m" ++ s ++ "\x1b[0m" | s <- ss]
 
 vcomp :: Doc -> Doc -> Doc
-vcomp (n, s) (m, t) = (k, map (pad (k-n)) s ++ map (pad (k-m)) t)
+vcomp (Doc n s) (Doc m t) = Doc k $ map (pad (k-n)) s ++ map (pad (k-m)) t
   where
     k = max n m
     pad n l = l ++ replicate n ' '
 
 hcomp :: Doc -> Doc -> Doc
-hcomp (0, _) d2 = d2
+hcomp (Doc 0 _) d2 = d2
 hcomp d1 d2 = d1 `hcomp_` (text " " `hcomp_` d2)
 
 hcomp_ :: Doc -> Doc -> Doc
-hcomp_ (n, xs) (m, ys) = (n + m, zipWith (++) (ext n xs) (ext m ys))
+hcomp_ (Doc n xs) (Doc m ys) = Doc (n + m) $ zipWith (++) (ext n xs) (ext m ys)
   where
     h = max (length xs) (length ys)
     ext n l = take h $ l ++ repeat (replicate n ' ')
 
 padDoc :: Doc -> Doc
 padDoc d = color red (foldr vcomp emptyDoc $ replicate (height d) $ text "  |") `hcomp` d
-
-height :: Doc -> Int
-height (_, l) = length l
 
 ------------------------------------------
 
