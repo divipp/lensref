@@ -363,23 +363,23 @@ timer = do
 crud :: WidgetContext s => Widget s
 crud = do
     names <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
-    psel <- newRef ("", Nothing)
+    psel  <- newRef ("", Nothing)
     let prefix = lensMap (iso fst (\i->(i,Nothing))) psel
     let sel = lensMap _2 psel
-    name <- newRef "John"
+    name    <- newRef "John"
     surname <- newRef "Romba"
-    let f (Just i) s = Just $ modRef names $ \l -> take i l ++ [s] ++ drop (i+1) l
-        f Nothing _ = Nothing
-        g i = do
+    let fullname = (,) <$> readRef surname <*> readRef name
+    let update s i = modRef names $ \l -> take i l ++ [s] ++ drop (i+1) l
+        delete i = do
             modRef names $ \l -> take i l ++ drop (i+1) l
             writeRef sel Nothing
-    let ns = (,) <$> readRef surname <*> readRef name
+    let filterfun = readRef prefix <&> \p -> filter (isPrefixOf p . fst . snd)
     vertically
         [ horizontally
             [ label "Filter prefix:"
             , entry prefix
             ]
-        , listbox (map (\(s, n) -> s ++ ", " ++ n) <$> (filter <$> (readRef prefix <&> \p -> isPrefixOf p . fst) <*> readRef names)) sel
+        , listbox sel $ (filterfun <*> (zip [0..] <$> readRef names)) <&> map (\(i, (s, n)) -> (i, s ++ ", " ++ n))
         , horizontally
             [ label "Name:"
             , entry name
@@ -390,22 +390,27 @@ crud = do
             ]
         , horizontally
             [ button (pure "Create") $ pure $ Just $ do
-                n <- readerToWriter ns
+                n <- readerToWriter fullname
                 modRef names (++ [n])
-            , button (pure "Update") $ f <$> readRef sel <*> ns
-            , button (pure "Delete") $ readRef sel <&> fmap g
+            , button (pure "Update") $ fmap <$> (update <$> fullname) <*> readRef sel
+            , button (pure "Delete") $ fmap delete <$> readRef sel
             ]
         ]
 
-listbox :: WidgetContext s => RefReader s [String] -> Ref s (Maybe Int) -> Widget s
-listbox as mi = do
+listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, String)] -> Widget s
+listbox sel as = do
     cell (as <&> not . null) $ \b -> case b of
         False -> emptyWidget
         True -> vertically
-            [ primButton (as <&> head) (Just $ readRef mi <&> maybe 37 (bool 32 37 . (== 0))) (pure True) $ writeRef mi $ Just 0
-            , listbox (as <&> drop 1) $ lensMap (iso (fmap pred) (fmap succ)) mi
+            [ primButton (as <&> snd . head)
+                         (Just $ col <$> (as <&> fst . head) <*> readRef sel)
+                         (pure True)
+                         (writeRef sel . Just . fst . head =<< readerToWriter as)
+            , listbox sel (as <&> drop 1)
             ]
     -- TODO: should work with tail instead of drop 1
+  where
+    col i = maybe 37 (bool 32 37 . (== i))
 
 --------------------------------------------------------------------------------
 
