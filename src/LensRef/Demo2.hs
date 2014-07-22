@@ -26,7 +26,7 @@ import Lens.Family2.Unchecked
 import LensRef.Context
 import LensRef.EqRef
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- 7guis #1
 
 {- |
 Simple counter
@@ -48,7 +48,7 @@ counter = do
         dynLabel $ show <$> readRef r
         button "Count" $ pure $ Just inc
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- 7guis #2
 
 temperatureConverter :: WidgetContext s => RefCreator s ()
 temperatureConverter = do
@@ -71,7 +71,7 @@ multiplying :: (Fractional a, Eq a) => a -> Lens' a a
 multiplying 0 = error "multiplying: factor 0"
 multiplying n = iso (*n) (/n)
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- 7guis #3
 
 type Time = Int
 
@@ -109,7 +109,7 @@ maybeLens :: Lens' (Bool, a) (Maybe a)
 maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
                  (\(_,a) -> maybe (False, a) ((,) True))
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- 7guis #4
 
 fps :: Rational
 fps = 50
@@ -136,7 +136,7 @@ timer = do
             void $ entryShow duration
         button "Reset" $ pure $ Just reset
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- 7guis #5
 
 crud :: WidgetContext s => RefCreator s ()
 crud = do
@@ -179,7 +179,8 @@ listbox sel as = void $ (null <$> as) `switch` \case
                    (writeRef sel . Just . fst . head =<< readerToWriter as)
         listbox sel $ drop 1 <$> as    -- TODO: should work with tail instead of drop 1
 
---------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------- other example
 
 editor :: WidgetContext s => RefCreator s ()
 editor = do
