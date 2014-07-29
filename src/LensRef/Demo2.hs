@@ -12,7 +12,7 @@ module LensRef.Demo2 where
 import Numeric (showFFloat)
 import Data.String (IsString (..))
 import Data.Function (on)
-import Data.List (isPrefixOf, sortBy)
+import Data.List (isPrefixOf, sortBy, insertBy)
 import Data.Maybe (fromMaybe, listToMaybe, isJust, isNothing)
 import qualified Data.IntMap as Map
 import Control.Applicative (pure, (<*>), (<$>), liftA2)
@@ -383,7 +383,7 @@ item s m = tell [(s, m)]
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 
-type Time  = Rational   -- seconds elapsed from start
+type Time  = Rational   -- seconds elapsed from program start
 type Delay = Rational   -- duration in seconds
 
 infix 1 `switch`
@@ -416,7 +416,12 @@ class RefContext s => WidgetContext s where
         -> (a -> RefCreator s b)
         -> RefCreator s (RefReader s b)
 
+    asyncDoAt    :: Time -> RefWriter s () -> RefCreator s ()
+
     asyncDo      :: Delay -> RefWriter s () -> RefCreator s ()
+    asyncDo d w = do
+        t <- lift currentTime
+        asyncDoAt (t + d) w
 
     currentTime  :: s Time
 
@@ -451,9 +456,9 @@ instance RefContext m => WidgetContext (WContext m) where
         g v = return <$> ((,) <$> f v <*> getLayout)
         h v = (fst <$> v, join $ snd <$> v)
 
-    asyncDo d w = do
-        f <- lift $ asks asyncWriteDict
-        f d w
+    asyncDoAt t w = do
+        f <- lift $ asks asyncDoAtDict
+        f t w
 
     currentTime = do
         t <- asks time
@@ -474,7 +479,7 @@ type WContext m = ReaderT (WidgetContextDict m) m
 
 data WidgetContextDict m = WidgetContextDict
     { addControlDict   :: RegisterControl (WContext m)
-    , asyncWriteDict   :: Rational -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
+    , asyncDoAtDict    :: Time -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
     , widgetCollection :: SimpleRef m (RefReader (WContext m) [Doc])
     , time             :: SimpleRef m Time
     }
@@ -505,7 +510,7 @@ collectLayouts = do
 
 run, run'
     :: RefCreator (WContext IO) ()
-    -> IO (Int -> IO (), Int -> String -> IO (), Int -> IO (), Rational -> IO ())
+    -> IO (Int -> IO (), Int -> String -> IO (), Int -> IO (), Delay -> IO ())
 run  = runWidget putStr . padding
 run' = runWidget (appendFile "out") . padding
 
@@ -513,14 +518,14 @@ runWidget
     :: forall m . RefContext m
     => (String -> m ())
     -> RefCreator (WContext m) ()
-    -> m (Int -> m (), Int -> String -> m (), Int -> m (), Rational -> m ())
+    -> m (Int -> m (), Int -> String -> m (), Int -> m (), Delay -> m ())
 runWidget out buildwidget = do
+    delayedactions <- newSimpleRef mempty
+    time           <- newSimpleRef 0
     controlmap     <- newSimpleRef mempty
     controlcounter <- newSimpleRef 0
-    delayedactions <- newSimpleRef mempty
     currentview    <- newSimpleRef emptyDoc
     collection     <- newSimpleRef $ pure []
-    time           <- newSimpleRef 0
 
     let addControl acts name = do
             i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
@@ -533,30 +538,32 @@ runWidget out buildwidget = do
             onRegionStatusChange_ $ \msg -> setControlActions <$> f msg
             addLayout $ return $ (,) () $
                 hcomp_ <$> name <*> (pure $ color yellow $ text $ map toSubscript $ show i)
-        asyncDo d _ | d < 0 = error "asyncDo"
-        asyncDo d w = lift $ modSimpleRef delayedactions $ modify $ f d
-          where
-            f d [] = [(d, w)]
-            f d ((d1,w1):as)
-                | d < d1    = (d, w): (d1-d,w1): as
-                | otherwise = (d1, w1): f (d-d1) as
-        st = WidgetContextDict addControl asyncDo collection time
 
-        delay d = lift (readSimpleRef delayedactions) >>= \case
-            [] -> return ()
-            ((d1, w1): as)
-                | d1 <= d -> do
-                    lift $ writeSimpleRef delayedactions as
-                    lift $ modSimpleRef time $ modify (+d1)
-                    w1
-                    delay (d-d1)
-                | otherwise ->
-                    lift $ writeSimpleRef delayedactions $ (d1-d, w1): as
+        asyncDoAt t w = lift $ do
+            ct <- readSimpleRef time
+            if (t < ct)
+              then fail "asyncDoAt"
+              else modSimpleRef delayedactions $ modify $ insertBy (compare `on` fst) (t, w)
+
+        delay d = do
+            ct <- lift $ readSimpleRef time
+            timeJump $ ct + d
+
+        timeJump t = do
+            lift (readSimpleRef delayedactions) >>= \case
+              ((t', w): as) | t' <= t -> do
+                lift $ writeSimpleRef delayedactions as
+                lift $ writeSimpleRef time t'
+                w
+                timeJump t
+              _ -> lift $ writeSimpleRef time t
 
         lookup_ :: Int -> m [Action (WContext m)]
         lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
 
         draw = modSimpleRef currentview (state $ \d -> (show d, emptyDoc)) >>= out
+
+        st = WidgetContextDict addControl asyncDoAt collection time
 
     flip runReaderT st $ runRefCreator $ \runRefWriter_ -> do
 
