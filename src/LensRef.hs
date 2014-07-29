@@ -1113,4 +1113,15 @@ data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 instance (IsString str, RefContext s) => IsString (RefReader s str) where
     fromString = pure . fromString
 
+instance (RefContext s, Num a) => Num (RefReader s a) where
+    (+) = liftA2 (+)
+    (*) = liftA2 (*)
+    negate = fmap negate
+    abs    = fmap abs
+    signum = fmap signum
+    fromInteger = pure . fromInteger
+
+instance (RefContext s, Fractional a) => Fractional (RefReader s a) where
+    recip  = fmap recip
+    fromRational = pure . fromRational
 

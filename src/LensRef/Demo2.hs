@@ -123,7 +123,7 @@ timer = do
     -- model
     duration <- newRef (10.0 :: Double2)
     elapsed  <- lensMap _2 <$> extendRef duration (lens fst $ \(_, t) d -> (d, min t d)) (0, 0)
-    let ratio = min 1 . max 0 <$> ((/) <$> readRef elapsed <*> readRef duration)
+    let ratio = min 1 . max 0 <$> (readRef elapsed / readRef duration)
         reset = writeRef elapsed 0
     void $ onChange ratio $ const $ do
         t <- readerToCreator $ readRef elapsed
