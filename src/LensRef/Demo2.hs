@@ -45,7 +45,7 @@ counter = do
     let inc = modRef r (+1)
     -- view
     horizontally $ do
-        dynLabel $ show <$> readRef r
+        dynLabel $ text . show <$> readRef r
         button "Count" $ pure $ Just inc
 
 -------------------------------------------------------------------------------- 7guis #2
@@ -65,7 +65,7 @@ temperatureConverter = do
 --------------- defined in Control.Lens
 
 adding :: Num a => a -> Lens' a a
-adding n = iso (+n) (subtract n)
+adding n = iso (+n) (+(-n))
 
 multiplying :: (Fractional a, Eq a) => a -> Lens' a a
 multiplying 0 = error "multiplying: factor 0"
@@ -75,27 +75,31 @@ multiplying n = iso (*n) (/n)
 
 type Time = Int
 
-booker :: WidgetContext s => RefCreator s ()
+booker :: forall s . WidgetContext s => RefCreator s ()
 booker = do
     -- model
     booked       <- newRef False
     startdate    <- newRef (0 :: Time)
     maybeenddate <- newRef (Nothing :: Maybe Time)
-    boolenddate  <- extendRef maybeenddate maybeLens (False, 0)
-    let isreturn = lensMap _1 boolenddate
-        bookaction parseok = do
-            ok    <- parseok
-            start <- readRef startdate
-            end   <- readRef maybeenddate
-            return $ (ok && maybe True (start <=) end, writeRef booked True) ^. maybeLens
     -- view
     void $ readRef booked `switch` \case
       True -> dynLabel $ do
         start <- readRef startdate
         readRef maybeenddate <&> \case
-            Just end -> "You have booked a return flight on " ++ show start ++ "-" ++ show end
-            Nothing  -> "You have booked a one-way flight on " ++ show start
+            Just end -> text $ "You have booked a return flight on " ++ show start ++ "-" ++ show end
+            Nothing  -> text $ "You have booked a one-way flight on " ++ show start
       False -> do
+        -- view model
+        boolenddate  <- extendRef maybeenddate maybeLens (False, 0)
+        let isreturn :: Ref s Bool
+            isreturn = lensMap _1 boolenddate
+            bookaction :: RefReader s Bool -> RefReader s (Maybe (RefWriter s ()))
+            bookaction parseok = do
+                ok    <- parseok
+                start <- readRef startdate
+                end   <- readRef maybeenddate
+                return $ (ok && maybe True (start <=) end, writeRef booked True) ^. maybeLens
+        -- view view
         combobox isreturn $ do
             item False "one-way flight"
             item True  "return flight"
@@ -107,7 +111,7 @@ booker = do
 
 maybeLens :: Lens' (Bool, a) (Maybe a)
 maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
-                 (\(_,a) -> maybe (False, a) ((,) True))
+                 (\(_,a) ma -> maybe (False, a) (\a' -> (True, a')) ma)
 
 -------------------------------------------------------------------------------- 7guis #4
 
@@ -129,8 +133,8 @@ timer = do
     vertically $ do
         horizontally $ do
             label "Elapsed Time:"
-            dynLabel $ (++"%") . show . (*100) <$> ratio
-        dynLabel $ (++"s") . show <$> readRef elapsed
+            dynLabel $ text . (++"%") . show . (*100) <$> ratio
+        dynLabel $ text . (++"s") . show <$> readRef elapsed
         horizontally $ do
             label "Duration:"
             void $ entryShow duration
@@ -159,7 +163,7 @@ crud = do
     --------- view
     vertically $ do
         horizontally $ label "Filter prefix:" >> entry prefix
-        listbox sel $ map (\(i, (s, n)) -> (i, s ++ ", " ++ n)) <$> filterednames
+        listbox sel $ map (\(i, (s, n)) -> (i, text $ s ++ ", " ++ n)) <$> filterednames
         horizontally $ label "Name:"    >> entry (lensMap _2 name)
         horizontally $ label "Surname:" >> entry (lensMap _1 name)
         horizontally $ do
@@ -169,16 +173,17 @@ crud = do
 
 --------------- part of the toolkit
 
-listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, String)] -> RefCreator s ()
+listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, Doc)] -> RefCreator s ()
 listbox sel as = void $ (null <$> as) `switch` \case
     True  -> return ()
     False -> do
-        primButton (snd . head <$> as)
-                   (Just $ (as <&> \x -> maybe grey (bool green grey . (== fst (head x)))) <*> readRef sel)
+        primButton (name <$> (head <$> as) <*> readRef sel)
                    (pure True)
                    (writeRef sel . Just . fst . head =<< readerToWriter as)
         listbox sel $ drop 1 <$> as    -- TODO: should work with tail instead of drop 1
-
+  where
+    name (a, s) (Just a') | a == a' = color green s
+    name (_, s) _ = s
 
 -------------------------------------------------------------------------------- other example
 
@@ -209,7 +214,7 @@ intListEditor def maxi list_ range = do
                 label "items"
                 smartButton "AddItem" len (+1)
                 smartButton "RemoveItem" len (+(-1))
-                smartButton (readRef len <&> \n -> "RemoveAll(" ++ show n ++ ")") len $ const 0
+                smartButton (readRef len <&> \n -> text $ "RemoveAll(" ++ show n ++ ")") len $ const 0
             horizontally $ do
                 smartButton "All+1"      list $ map $ over _1 (+1)
                 smartButton "All-1"      list $ map $ over _1 (+(-1))
@@ -220,12 +225,12 @@ intListEditor def maxi list_ range = do
                 smartButton "SelectEven" list $ map $ \(a,_) -> (a, even a)
                 smartButton "InvertSel"  list $ map $ over _2 not
             horizontally $ do
-                smartButton (sel <&> \s -> "DelSel(" ++ show (length s) ++ ")") list $ filter $ not . snd
+                smartButton (sel <&> \s -> text $ "DelSel(" ++ show (length s) ++ ")") list $ filter $ not . snd
                 smartButton "CopySel" safeList $ concatMap $ \(x,b) -> (x,b): [(x,False) | b]
                 smartButton "Sel+1"     list $ map $ mapSel (+1)
                 smartButton "Sel-1"     list $ map $ mapSel (+(-1))
             horizontally $ do
-                dynLabel $ show <$> (readRef op <*> (map fst <$> sel))
+                dynLabel $ text . show <$> (readRef op <*> (map fst <$> sel))
                 label "selected sum"
             padding $ listEditor def (map itemEditor [0..]) list_
         item "Settings" $ horizontally $ do
@@ -236,7 +241,7 @@ intListEditor def maxi list_ range = do
 
     itemEditor :: Int -> Ref s (Integer, Bool) -> RefCreator s ()
     itemEditor i r = horizontally $ do
-        label $ show (i+1) ++ "."
+        label $ text $ show (i+1) ++ "."
         void $ entryShow $ _1 `lensMap` r
         button (bool "unselect" "select" . snd <$> readRef r) $ pure $ Just $ modRef (_2 `lensMap` r) not
         button "Del"  $ pure $ Just $ modRef list $ \xs -> take i xs ++ drop (i+1) xs
@@ -305,31 +310,31 @@ undoLens eq = lens get set where
 --------------------------------------------------------------------------------
 
 checkbox :: WidgetContext s => Ref s Bool -> RefCreator s ()
-checkbox r = primButton (show <$> readRef r) Nothing (pure True) $ modRef r not
+checkbox r = primButton (text . show <$> readRef r) (pure True) $ modRef r not
 
-combobox :: (WidgetContext s, Eq a) => Ref s a -> Writer [(a, String)] () -> RefCreator s ()
+combobox :: (WidgetContext s, Eq a) => Ref s a -> Writer [(a, Doc)] () -> RefCreator s ()
 combobox i as = horizontally $ forM_ (execWriter as) $ \(n, s) ->
-    primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
+    primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure s) (pure True) $ writeRef i n
 
 -- | Button.
 button
     :: WidgetContext s
-    => RefReader s String     -- ^ dynamic label of the button
+    => RefReader s Doc     -- ^ dynamic label of the button
     -> RefReader s (Maybe (RefWriter s ()))     -- ^ when the @Maybe@ readRef is @Nothing@, the button is inactive
     -> RefCreator s ()
 button r fm
-    = primButton r Nothing (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
+    = primButton r (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
 
 -- | Button which inactivates itself automatically.
 smartButton
     :: WidgetContext s
-    => RefReader s String     -- ^ dynamic label of the button
-    -> EqRef s a              -- ^ underlying reference
+    => RefReader s Doc   -- ^ dynamic label of the button
+    -> EqRef s a         -- ^ underlying reference
     -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference.
                   --   When the button is pressed the reference is modified with this function.
     -> RefCreator s ()
 smartButton s r f
-    = primButton s Nothing (readRef r >>= changing r . f) (modRef r f)
+    = primButton s (readRef r >>= changing r . f) (modRef r f)
 
 -- | Label entry.
 entry :: WidgetContext s => Ref s String -> RefCreator s ()
@@ -355,7 +360,7 @@ entryShowActive active r = do
         ((x,""):_) -> (x, Nothing)
         _ -> (v, Just s)
 
-type NamedWidgets s = WriterT [(String, RefCreator s ())] (RefCreator s)
+type NamedWidgets s = WriterT [(Doc, RefCreator s ())] (RefCreator s)
 
 notebook :: WidgetContext s => NamedWidgets s () -> RefCreator s ()
 notebook m = do
@@ -363,7 +368,7 @@ notebook m = do
     i <- newRef (0 :: Int)
     vertically $ do
         horizontally $ forM_ (zip [0..] ws) $ \(n, (s, _)) ->
-            primButton (pure s) (Just $ bool green grey . (== n) <$> readRef i) (pure True) $ writeRef i n
+            primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure s) (pure True) $ writeRef i n
         padding $ void $ readRef i `switch` snd . (ws !!)
 
 item :: MonadWriter [(a, b)] m => a -> b -> m ()
@@ -371,26 +376,25 @@ item s m = tell [(s, m)]
 
 --------------------------------------------------------------------------------
 
-label :: WidgetContext s => String -> RefCreator s ()
-label s = addLayout $ pure ((), pure $ color magenta $ text s)
+label :: WidgetContext s => Doc -> RefCreator s ()
+label s = addLayout $ pure ((), pure $ color magenta s)
 
-dynLabel :: WidgetContext s => RefReader s String -> RefCreator s ()
-dynLabel r = addControl (pure [Get r]) $ color bluebackground <$> (text . (" " ++) . (++ " ") <$> r)
+dynLabel :: WidgetContext s => RefReader s Doc -> RefCreator s ()
+dynLabel r = addControl (pure [Get r]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") <$> r)
 
 primButton
     :: WidgetContext s
-    => RefReader s String     -- ^ dynamic label of the button
-    -> Maybe (RefReader s Color)
+    => RefReader s Doc        -- ^ dynamic label of the button
     -> RefReader s Bool       -- ^ the button is active when this returns @True@
     -> RefWriter s ()         -- ^ the action to do when the button is pressed
     -> RefCreator s ()
-primButton name col vis act
+primButton name vis act
     = addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
-        $ color <$> (fromMaybe (pure grey) col >>= \c -> bool c magenta <$> vis) <*> fmap text name
+        $ color <$> (bool grey magenta <$> vis) <*> name
 
 primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> RefCreator s ()
 primEntry active ok r
-    = addControl (active <&> \case True -> [Put $ writeRef r, Get $ readRef r]; False -> [])
+    = addControl (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
         $ color <$> (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
                 <*> (text . pad 7 . (++ " ") <$> readRef r)
   where
@@ -431,7 +435,7 @@ type Delay = Rational   -- duration in seconds
 data Action s
     = Click (RefWriter s ())             -- button and checkbox
     | Put   (String -> RefWriter s ())   -- entry
-    | Get   (RefReader s String)         -- entry and dynamic label
+    | Get   (RefReader s Doc)            -- entry and dynamic label
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -466,12 +470,12 @@ instance RefContext m => WidgetContext (WContext m) where
 run, run'
     :: RefCreator (WContext IO) ()
     -> IO (Int -> IO (), Int -> String -> IO (), Int -> IO (), Rational -> IO ())
-run  = runWidget (putStr . unlines) . padding
-run' = runWidget (appendFile "out" . unlines) . padding
+run  = runWidget putStr . padding
+run' = runWidget (appendFile "out") . padding
 
 runWidget
     :: forall m . RefContext m
-    => ([String] -> m ())
+    => (String -> m ())
     -> RefCreator (WContext m) ()
     -> m (Int -> m (), Int -> String -> m (), Int -> m (), Rational -> m ())
 runWidget out buildwidget = do
@@ -514,7 +518,7 @@ runWidget out buildwidget = do
         lookup_ :: Int -> m [Action (WContext m)]
         lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
 
-        draw = modSimpleRef currentview (state $ \(Doc _ s) -> (s, emptyDoc)) >>= out
+        draw = modSimpleRef currentview (state $ \d -> (show d, emptyDoc)) >>= out
 
     flip runReaderT st $ runRefCreator $ \runRefWriter_ -> do
 
@@ -533,7 +537,7 @@ runWidget out buildwidget = do
         return
             ( \n -> lookup_ n >>= click >> draw
             , \n s -> lookup_ n >>= (`put` s) >> draw
-            , \n -> (lookup_ n >>= get) >>= out . (:[])
+            , \n -> (lookup_ n >>= get) >>= out . show
             , \t -> runRefWriter (delay t) >> draw
             )
 
@@ -544,6 +548,9 @@ data Doc = Doc Int [String] deriving Eq
 
 instance IsString Doc where
     fromString = text
+
+instance Show Doc where
+    show (Doc _ ss) = unlines ss
 
 height :: Doc -> Int
 height (Doc _ l) = length l
@@ -565,7 +572,7 @@ vcomp (Doc n s) (Doc m t) = Doc k $ map (pad (k-n)) s ++ map (pad (k-m)) t
 
 hcomp :: Doc -> Doc -> Doc
 hcomp (Doc 0 _) d2 = d2
-hcomp d1 d2 = d1 `hcomp_` (text " " `hcomp_` d2)
+hcomp d1 d2 = d1 `hcomp_` (" " `hcomp_` d2)
 
 hcomp_ :: Doc -> Doc -> Doc
 hcomp_ (Doc n xs) (Doc m ys) = Doc (n + m) $ zipWith (++) (ext n xs) (ext m ys)
@@ -574,7 +581,7 @@ hcomp_ (Doc n xs) (Doc m ys) = Doc (n + m) $ zipWith (++) (ext n xs) (ext m ys)
     ext n l = take h $ l ++ repeat (replicate n ' ')
 
 padDoc :: Doc -> Doc
-padDoc d = color red (foldr vcomp emptyDoc $ replicate (height d) $ text "  |") `hcomp` d
+padDoc d = color red (foldr vcomp emptyDoc $ replicate (height d) "  |") `hcomp` d
 
 ------------------------------------------
 
