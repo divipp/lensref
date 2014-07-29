@@ -33,6 +33,7 @@ module LensRef
     , memoRead
     , extendRef
     , onChange
+    , onChange_
     , onChangeEq
     , onChangeEq_
     , onChangeMemo
@@ -781,6 +782,21 @@ onChange m f = RefCreator $ \st -> do
         (h, _) <- r
         h msg
     return $ RefReader $ RefCreator $ \_ -> r <&> snd
+
+onChange_ :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
+onChange_ m f = RefCreator $ \st -> do
+    r <- newReference st (const $ pure (), error "impossible #3")
+    register st r True $ \(h', _) -> do
+        a <- runRefReaderT' st m
+        noDependency st $ do
+            h' Kill
+            (h, b) <- getHandler st $ flip unRefCreator st $ f a
+            return (h, b)
+    tellHand st $ \msg -> do
+        (h, _) <- readRef__ st r
+        h msg
+
+    return $ lensMap _2 r
 
 onChangeEq (RefReaderTPure a) f = fmap RefReaderTPure $ f a
 onChangeEq m f = RefCreator $ \st -> do

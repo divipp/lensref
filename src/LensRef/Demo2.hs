@@ -53,7 +53,7 @@ counter = do
 temperatureConverter :: WidgetContext s => RefCreator s ()
 temperatureConverter = do
     -- model
-    celsius <- newRef (0 :: Double2)
+    celsius <- newRef (0 :: Prec2 Double)
     let fahrenheit = multiplying 1.8 . adding 32 `lensMap` celsius
     -- view
     horizontally $ do
@@ -73,7 +73,7 @@ multiplying n = iso (*n) (/n)
 
 -------------------------------------------------------------------------------- 7guis #3
 
-type Date = Int
+type Date = NonNegative Integer
 
 booker :: forall s . WidgetContext s => RefCreator s ()
 booker = do
@@ -130,11 +130,11 @@ timer = do
     vertically $ do
         horizontally $ do
             label "Elapsed Time:"
-            dynLabel $ text . (++"%") . show . (*100) . toDouble2 <$> ratio
-        dynLabel $ text . (++"s") . show . toDouble2 <$> elapsed
+            dynLabel $ text . (++"%") . show . (*100) . (^. convert . prec2) <$> ratio
+        dynLabel $ text . (++"s") . show . (^. convert . prec2) <$> elapsed
         horizontally $ do
             label "Duration:"
-            void $ entryShow $ lensMap (iso toDouble2 realToFrac) duration       -- TODO: don't allow negative numbers
+            void $ entryShow $ lensMap (convert . prec2 . nonNegative) duration
         button "Reset" $ pure $ Just reset
 
 ---------- part of the toolkit
@@ -195,32 +195,24 @@ listbox sel as = void $ (null <$> as) `switch` \case
 
 circleDrawer :: forall s . WidgetContext s => RefCreator s ()
 circleDrawer = do
-    -- model
-    mousepos <- newRef (0, 0 :: Double2)
-    list     <- newRef [((0,2), 1), ((2,0), 1), ((0,0), 2)]
-    selected <- onChangeEq_ (readRef list) $ const $ return Nothing
-    (undo, redo)  <- undoTr (==) list
+    -------- model
+    mousepos <- newRef (0, 0 :: Prec2 Double)
+    circles  <- newRef [((0,2), 1), ((2,0), 1), ((0,0), 2)]
+    selected <- onChange_ (readRef circles) $ const $ return Nothing
+    (undo, redo)  <- undoTr (==) circles
     sel <- extendRef selected maybeLens (False, (0, 1))
-
     let click = do
             mp <- readerToWriter $ readRef mousepos
-            l  <- readerToWriter $ readRef list
-            case filter (\(_, (p, d)) -> distance mp p <= d + 0.01) $ zip [0..] l of
-                ((i, (_, d)): _) -> writeRef selected $ Just (i, d)
-                [] -> modRef list $ insertBy (compare `on` snd) (mp, 1)
-
-        view = do
-            l <- readRef list
-            s <- readRef selected
-            return $ case s of
-              Nothing -> l
-              Just (i, d) -> insertBy (compare `on` snd) (fst $ l !! i, d) $ take i l ++ drop (i+1) l
-
-        commit = do
-            readerToWriter view >>= writeRef list
-            writeRef selected Nothing   -- TODO: elim
-
-    -- view
+            l  <- readerToWriter $ readRef circles
+            head $ [ writeRef selected $ Just (i, d)
+                   | (i, (p, d)) <- zip [0..] l
+                   , distance mp p <= d + 0.01
+                   ] ++
+                   [ modRef circles $ insertBy (compare `on` snd) (mp, 1) ]
+        view = maybe id f <$> readRef selected <*> readRef circles  where
+            f (i, d) l = insertBy (compare `on` snd) (fst $ l !! i, d) $ take i l ++ drop (i+1) l
+        commit = readerToWriter view >>= writeRef circles
+    -------- view
     horizontally $ do
         button "Undo" undo
         button "Redo" redo
@@ -234,9 +226,9 @@ circleDrawer = do
       True  -> do
         horizontally $ do
             label "Adjust diameter of circle at"
-            dynLabel $ text . show . fst <$> ((!!) <$> readRef list <*> readRef (lensMap (_2 . _1) sel))
+            dynLabel $ text . show . fst <$> ((!!) <$> readRef circles <*> readRef (lensMap (_2 . _1) sel))
         horizontally $ do
-            void $ entryShow $ lensMap (_2 . _2) sel
+            void $ entryShow $ lensMap (_2 . _2 . nonNegative) sel
             button "Done" $ pure $ Just commit
 
 distance (x1, y1) (x2, y2)
@@ -608,17 +600,36 @@ bool _ b False = b
 
 ---------------------
 
-newtype Double2 = Double2 Double
+newtype Prec2 a = Prec2 { unPrec2 :: a }
     deriving (Eq, Ord, Num, Fractional, Floating, Real, RealFrac, RealFloat)
 
-instance Show Double2 where
+instance RealFloat a => Show (Prec2 a) where
     show d = showFFloat (Just 2) d ""
-instance Read Double2 where
+instance Read a => Read (Prec2 a) where
     readsPrec i = map f . readsPrec i where
-        f (a, s) = (Double2 a, s)
+        f (a, s) = (Prec2 a, s)
 
-toDouble2 :: Real a => a -> Double2
-toDouble2 = realToFrac
+prec2 :: Lens' a (Prec2 a)
+prec2 = iso Prec2 unPrec2
+
+---------------------
+
+newtype NonNegative a = NonNegative { unNonNegative :: a }
+    deriving (Eq, Ord, Num, Fractional, Floating, Real, RealFrac, RealFloat)
+
+instance Show a => Show (NonNegative a) where
+    show (NonNegative x) = show x
+instance (Read a, Ord a, Num a) => Read (NonNegative a) where
+    readsPrec i = concatMap f . readsPrec i where
+        f (a, s) = [(NonNegative a, s) | a >= 0]
+
+nonNegative :: Lens' a (NonNegative a)
+nonNegative = iso NonNegative unNonNegative
+
+---------------------
+
+convert :: (RealFrac a, RealFrac b) => Lens' a b
+convert = iso realToFrac realToFrac
 
 ---------------------
 
