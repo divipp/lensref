@@ -381,73 +381,94 @@ item :: MonadWriter [(a, b)] m => a -> b -> m ()
 item s m = tell [(s, m)]
 
 --------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
-label :: WidgetContext s => Doc -> RefCreator s ()
-label s = addLayout $ pure ((), pure $ color magenta s)
-
-dynLabel :: WidgetContext s => RefReader s Doc -> RefCreator s ()
-dynLabel r = addControl (pure [Get r]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") <$> r)
-
-primButton
-    :: WidgetContext s
-    => RefReader s Doc        -- ^ dynamic label of the button
-    -> RefReader s Bool       -- ^ the button is active when this returns @True@
-    -> RefWriter s ()         -- ^ the action to do when the button is pressed
-    -> RefCreator s ()
-primButton name vis act
-    = addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
-        $ color <$> (bool grey magenta <$> vis) <*> name
-
-primEntry :: (RefClass r, WidgetContext s) => RefReader s Bool -> RefReader s Bool -> r s String -> RefCreator s ()
-primEntry active ok r
-    = addControl (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
-        $ color <$> (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
-                <*> (text . pad 7 . (++ " ") <$> readRef r)
-  where
-    pad n s = replicate (n - length s) ' ' ++ s
-
-padding :: WidgetContext s => RefCreator s a -> RefCreator s a
-padding w = addLayout $ (,) <$> w <*> (fmap padDoc <$> getLayout)
-
-vertically :: WidgetContext s => RefCreator s a -> RefCreator s a
-vertically ms = addLayout $ (,) <$> ms <*> getLayout
-
-horizontally :: WidgetContext s => RefCreator s a -> RefCreator s a
-horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr hcomp emptyDoc) <$> collectLayouts)
-
-getLayout :: WidgetContext s => RefCreator s (RefReader s Doc)
-getLayout = fmap (foldr vcomp emptyDoc) <$> collectLayouts
+type Time  = Rational   -- seconds elapsed from start
+type Delay = Rational   -- duration in seconds
 
 infix 1 `switch`
 
-switch :: (Eq a, WidgetContext s) => RefReader s a -> (a -> RefCreator s b) -> RefCreator s (RefReader s b)
-switch r f = addLayout $ h <$> onChangeMemo r g
-  where
-    g v = return <$> ((,) <$> f v <*> getLayout)
-    h v = (fst <$> v, join $ snd <$> v)
-
-
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
-
 class RefContext s => WidgetContext s where
-    addLayout      :: RefCreator s (a, RefReader s Doc) -> RefCreator s a
-    collectLayouts :: RefCreator s (RefReader s [Doc])
-    addControl     :: RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
-    asyncDo        :: Delay -> RefWriter s () -> RefCreator s ()
-    currentTime    :: s Time
 
-type Time  = Rational   -- seconds elapsed from start
+    label    ::             Doc -> RefCreator s ()
+    dynLabel :: RefReader s Doc -> RefCreator s ()
 
-type Delay = Rational   -- duration in seconds
+    primButton
+        :: RefReader s Doc        -- ^ dynamic label of the button
+        -> RefReader s Bool       -- ^ the button is active when this returns @True@
+        -> RefWriter s ()         -- ^ the action to do when the button is pressed
+        -> RefCreator s ()
+
+    primEntry
+        :: RefClass r
+        => RefReader s Bool
+        -> RefReader s Bool
+        -> r s String
+        -> RefCreator s ()
+
+    padding      :: RefCreator s a -> RefCreator s a
+    vertically   :: RefCreator s a -> RefCreator s a
+    horizontally :: RefCreator s a -> RefCreator s a
+
+    switch
+        :: Eq a
+        => RefReader s a
+        -> (a -> RefCreator s b)
+        -> RefCreator s (RefReader s b)
+
+    asyncDo      :: Delay -> RefWriter s () -> RefCreator s ()
+
+    currentTime  :: s Time
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+
+instance RefContext m => WidgetContext (WContext m) where
+
+    label s = addLayout $ pure ((), pure $ color magenta s)
+
+    dynLabel r = addControl (pure [Get r]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") <$> r)
+
+    primButton name vis act
+        = addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
+            $ color <$> (bool grey magenta <$> vis) <*> name
+
+    primEntry active ok r
+        = addControl (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
+            $ color <$> (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
+                    <*> (text . pad 7 . (++ " ") <$> readRef r)
+      where
+        pad n s = replicate (n - length s) ' ' ++ s
+
+    padding w = addLayout $ (,) <$> w <*> (fmap padDoc <$> getLayout)
+
+    vertically ms = addLayout $ (,) <$> ms <*> getLayout
+
+    horizontally ms = addLayout $ (,) <$> ms <*> (fmap (foldr hcomp emptyDoc) <$> collectLayouts)
+
+    switch r f = addLayout $ h <$> onChangeMemo r g
+      where
+        g v = return <$> ((,) <$> f v <*> getLayout)
+        h v = (fst <$> v, join $ snd <$> v)
+
+    asyncDo d w = do
+        f <- lift $ asks asyncWriteDict
+        f d w
+
+    currentTime = do
+        t <- asks time
+        readSimpleRef t
+
+getLayout :: (RefContext m, s ~ WContext m) => RefCreator s (RefReader s Doc)
+getLayout = fmap (foldr vcomp emptyDoc) <$> collectLayouts
+
+
+--------------------------------------------------------------------------------
 
 data Action s
     = Click (RefWriter s ())             -- button and checkbox
     | Put   (String -> RefWriter s ())   -- entry
     | Get   (RefReader s Doc)            -- entry and dynamic label
-
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
 
 type WContext m = ReaderT (WidgetContextDict m) m
 
@@ -460,25 +481,27 @@ data WidgetContextDict m = WidgetContextDict
 
 type RegisterControl s = RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
 
-instance RefContext m => WidgetContext (WContext m) where
-    addControl acts name = do
-        f <- lift $ asks addControlDict
-        f acts name
-    asyncDo d w = do
-        f <- lift $ asks asyncWriteDict
-        f d w
-    addLayout f = do
-        c <- lift $ asks widgetCollection
-        vs <- lift $ modSimpleRef c $ state $ \s -> (s, pure [])
-        (a, v) <- f
-        lift $ modSimpleRef c $ modify $ liftA2 (++) $ liftA2 (:) v vs
-        return a
-    collectLayouts = do
-        c <- lift $ asks widgetCollection
-        lift $ modSimpleRef c $ state $ \s -> (reverse <$> s, pure [])
-    currentTime = do
-        t <- asks time
-        readSimpleRef t
+--------------------------------------------------------------------------------
+
+addControl :: (RefContext m, s ~ WContext m) => RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
+addControl acts name = do
+    f <- lift $ asks addControlDict
+    f acts name
+
+addLayout :: (RefContext m, s ~ WContext m) => RefCreator s (a, RefReader s Doc) -> RefCreator s a
+addLayout f = do
+    c <- lift $ asks widgetCollection
+    vs <- lift $ modSimpleRef c $ state $ \s -> (s, pure [])
+    (a, v) <- f
+    lift $ modSimpleRef c $ modify $ liftA2 (++) $ liftA2 (:) v vs
+    return a
+
+collectLayouts :: (RefContext m, s ~ WContext m) => RefCreator s (RefReader s [Doc])
+collectLayouts = do
+    c <- lift $ asks widgetCollection
+    lift $ modSimpleRef c $ state $ \s -> (reverse <$> s, pure [])
+
+--------------------------------
 
 run, run'
     :: RefCreator (WContext IO) ()
