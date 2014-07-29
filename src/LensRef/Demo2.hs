@@ -73,14 +73,14 @@ multiplying n = iso (*n) (/n)
 
 -------------------------------------------------------------------------------- 7guis #3
 
-type Time = Int
+type Date = Int
 
 booker :: forall s . WidgetContext s => RefCreator s ()
 booker = do
     -- model
     booked       <- newRef False
-    startdate    <- newRef (0 :: Time)
-    maybeenddate <- newRef (Nothing :: Maybe Time)
+    startdate    <- newRef (0 :: Date)
+    maybeenddate <- newRef (Nothing :: Maybe Date)
     -- view
     void $ readRef booked `switch` \case
       True -> dynLabel $ do
@@ -115,30 +115,36 @@ maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
 
 -------------------------------------------------------------------------------- 7guis #4
 
-fps :: Rational
-fps = 50
-
 timer :: WidgetContext s => RefCreator s ()
 timer = do
     -- model
-    duration <- newRef (10.0 :: Double2)
-    elapsed  <- lensMap _2 <$> extendRef duration (lens fst $ \(_, t) d -> (d, min t d)) (0, 0)
-    let ratio = min 1 . max 0 <$> (readRef elapsed / readRef duration)
-        reset = writeRef elapsed 0
-    void $ onChange ratio $ const $ do
-        t <- readerToCreator $ readRef elapsed
-        d <- readerToCreator $ readRef duration
-        when (t < d) $ asyncDo (1/fps) $ modRef elapsed $ min d . (+ 1/realToFrac fps)
+    duration <- newRef 10
+    start <- newRef =<< lift currentTime
+    timer <- join <$> onChange (readRef start + readRef duration) (mkTimer (1/50))
+    let elapsed = timer - readRef start
+        ratio = per <$> elapsed <*> readRef duration where
+            per _ 0 = 1
+            per a b = a / b
+        reset = writeRef start =<< lift currentTime
     -- view
     vertically $ do
         horizontally $ do
             label "Elapsed Time:"
-            dynLabel $ text . (++"%") . show . (*100) <$> ratio
-        dynLabel $ text . (++"s") . show <$> readRef elapsed
+            dynLabel $ text . (++"%") . show . (*100) . toDouble2 <$> ratio
+        dynLabel $ text . (++"s") . show . toDouble2 <$> elapsed
         horizontally $ do
             label "Duration:"
-            void $ entryShow duration
+            void $ entryShow $ lensMap (iso toDouble2 realToFrac) duration       -- TODO: don't allow negative numbers
         button "Reset" $ pure $ Just reset
+
+---------- part of the toolkit
+
+mkTimer :: WidgetContext s => Delay -> Time -> RefCreator s (RefReader s Time)
+mkTimer refresh end = do
+    x <- newRef =<< lift currentTime
+    void $ onChange (readRef x) $ \xt -> when (xt < end) $ asyncDo refresh $ writeRef x =<< lift currentTime
+    return $ readRef x
+
 
 -------------------------------------------------------------------------------- 7guis #5
 
@@ -429,6 +435,9 @@ class RefContext s => WidgetContext s where
     collectLayouts :: RefCreator s (RefReader s [Doc])
     addControl     :: RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
     asyncDo        :: Delay -> RefWriter s () -> RefCreator s ()
+    currentTime    :: s Time
+
+type Time  = Rational   -- seconds elapsed from start
 
 type Delay = Rational   -- duration in seconds
 
@@ -446,6 +455,7 @@ data WidgetContextDict m = WidgetContextDict
     { addControlDict   :: RegisterControl (WContext m)
     , asyncWriteDict   :: Rational -> RefWriter (WContext m) () -> RefCreator (WContext m) ()
     , widgetCollection :: SimpleRef m (RefReader (WContext m) [Doc])
+    , time             :: SimpleRef m Time
     }
 
 type RegisterControl s = RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
@@ -466,6 +476,9 @@ instance RefContext m => WidgetContext (WContext m) where
     collectLayouts = do
         c <- lift $ asks widgetCollection
         lift $ modSimpleRef c $ state $ \s -> (reverse <$> s, pure [])
+    currentTime = do
+        t <- asks time
+        readSimpleRef t
 
 run, run'
     :: RefCreator (WContext IO) ()
@@ -484,6 +497,7 @@ runWidget out buildwidget = do
     delayedactions <- newSimpleRef mempty
     currentview    <- newSimpleRef emptyDoc
     collection     <- newSimpleRef $ pure []
+    time           <- newSimpleRef 0
 
     let addControl acts name = do
             i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
@@ -503,13 +517,14 @@ runWidget out buildwidget = do
             f d ((d1,w1):as)
                 | d < d1    = (d, w): (d1-d,w1): as
                 | otherwise = (d1, w1): f (d-d1) as
-        st = WidgetContextDict addControl asyncDo collection
+        st = WidgetContextDict addControl asyncDo collection time
 
         delay d = lift (readSimpleRef delayedactions) >>= \case
             [] -> return ()
             ((d1, w1): as)
                 | d1 <= d -> do
                     lift $ writeSimpleRef delayedactions as
+                    lift $ modSimpleRef time $ modify (+d1)
                     w1
                     delay (d-d1)
                 | otherwise ->
@@ -613,6 +628,9 @@ instance Show Double2 where
 instance Read Double2 where
     readsPrec i = map f . readsPrec i where
         f (a, s) = (Double2 a, s)
+
+toDouble2 :: Real a => a -> Double2
+toDouble2 = realToFrac
 
 ---------------------
 
