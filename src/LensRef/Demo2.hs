@@ -12,7 +12,7 @@ module LensRef.Demo2 where
 import Numeric (showFFloat)
 import Data.String (IsString (..))
 import Data.Function (on)
-import Data.List (isPrefixOf, sortBy, insertBy)
+import Data.List (isPrefixOf, insertBy)
 import Data.Maybe (fromMaybe, listToMaybe, isJust, isNothing)
 import qualified Data.IntMap as Map
 import Control.Applicative (pure, (<*>), (<$>), liftA2)
@@ -191,100 +191,58 @@ listbox sel as = void $ (null <$> as) `switch` \case
     name (a, s) (Just a') | a == a' = color green s
     name (_, s) _ = s
 
--------------------------------------------------------------------------------- other example
+-------------------------------------------------------------------------------- 7guis #6
 
-editor :: WidgetContext s => RefCreator s ()
-editor = do
-    s <- newRef True
-    st <- newRef []
-    intListEditor (0, True) 15 st s
+circleDrawer :: forall s . WidgetContext s => RefCreator s ()
+circleDrawer = do
+    -- model
+    mousepos <- newRef (0, 0 :: Double2)
+    list     <- newRef [((0,2), 1), ((2,0), 1), ((0,0), 2)]
+    selected <- onChangeEq_ (readRef list) $ const $ return Nothing
+    (undo, redo)  <- undoTr (==) list
+    sel <- extendRef selected maybeLens (False, (0, 1))
 
-intListEditor
-    :: forall s
-    .  WidgetContext s
-    => (Integer, Bool)          -- ^ default element
-    -> Int                      -- ^ maximum number of elements
-    -> Ref s [(Integer, Bool)]  -- ^ state reference
-    -> Ref s Bool               -- ^ settings reference
-    -> RefCreator s ()
-intListEditor def maxi list_ range = do
-    (undo, redo)  <- undoTr ((==) `on` map fst) list_
-    op <- newRef sum
-    notebook $ do
-        item "Editor" $ do
-            horizontally $ do
-                button "Undo" undo
-                button "Redo" redo
-            horizontally $ do
-                void $ entryShow len
-                label "items"
-                smartButton "AddItem" len (+1)
-                smartButton "RemoveItem" len (+(-1))
-                smartButton (readRef len <&> \n -> text $ "RemoveAll(" ++ show n ++ ")") len $ const 0
-            horizontally $ do
-                smartButton "All+1"      list $ map $ over _1 (+1)
-                smartButton "All-1"      list $ map $ over _1 (+(-1))
-                smartButton "Sort"       list $ sortBy (compare `on` fst)
-            horizontally $ do
-                smartButton "SelectAll"  list $ map $ set _2 True
-                smartButton "SelectPos"  list $ map $ \(a,_) -> (a, a>0)
-                smartButton "SelectEven" list $ map $ \(a,_) -> (a, even a)
-                smartButton "InvertSel"  list $ map $ over _2 not
-            horizontally $ do
-                smartButton (sel <&> \s -> text $ "DelSel(" ++ show (length s) ++ ")") list $ filter $ not . snd
-                smartButton "CopySel" safeList $ concatMap $ \(x,b) -> (x,b): [(x,False) | b]
-                smartButton "Sel+1"     list $ map $ mapSel (+1)
-                smartButton "Sel-1"     list $ map $ mapSel (+(-1))
-            horizontally $ do
-                dynLabel $ text . show <$> (readRef op <*> (map fst <$> sel))
-                label "selected sum"
-            padding $ listEditor def (map itemEditor [0..]) list_
-        item "Settings" $ horizontally $ do
-            label "create range"
-            checkbox range
- where
-    list = toEqRef list_
+    let click = do
+            mp <- readerToWriter $ readRef mousepos
+            l  <- readerToWriter $ readRef list
+            case filter (\(_, (p, d)) -> distance mp p <= d + 0.01) $ zip [0..] l of
+                ((i, (_, d)): _) -> writeRef selected $ Just (i, d)
+                [] -> modRef list $ insertBy (compare `on` snd) (mp, 1)
 
-    itemEditor :: Int -> Ref s (Integer, Bool) -> RefCreator s ()
-    itemEditor i r = horizontally $ do
-        label $ text $ show (i+1) ++ "."
-        void $ entryShow $ _1 `lensMap` r
-        button (bool "unselect" "select" . snd <$> readRef r) $ pure $ Just $ modRef (_2 `lensMap` r) not
-        button "Del"  $ pure $ Just $ modRef list $ \xs -> take i xs ++ drop (i+1) xs
-        button "Copy" $ pure $ Just $ modRef list $ \xs -> take (i+1) xs ++ drop i xs
+        view = do
+            l <- readRef list
+            s <- readRef selected
+            return $ case s of
+              Nothing -> l
+              Just (i, d) -> insertBy (compare `on` snd) (fst $ l !! i, d) $ take i l ++ drop (i+1) l
 
-    safeList = lens id (const $ take maxi) `lensMap` list
+        commit = do
+            readerToWriter view >>= writeRef list
+            writeRef selected Nothing   -- TODO: elim
 
-    sel = filter snd <$> readRef list
+    -- view
+    horizontally $ do
+        button "Undo" undo
+        button "Redo" redo
+    horizontally $ do
+        label "MousePos:"
+        void $ entryShow mousepos
+        primButton "MouseClick" (not <$> readRef (lensMap _1 sel)) click
+    dynLabel $ view <&> \l -> foldr vcomp emptyDoc [text (show p) `hcomp` text (show d) | (p, d) <- l]
+    void $ (readRef $ lensMap _1 sel) `switch` \case
+      False -> return ()
+      True  -> do
+        horizontally $ do
+            label "Adjust diameter of circle at"
+            dynLabel $ text . show . fst <$> ((!!) <$> readRef list <*> readRef (lensMap (_2 . _1) sel))
+        horizontally $ do
+            void $ entryShow $ lensMap (_2 . _2) sel
+            button "Done" $ pure $ Just commit
 
-    len = joinRef $ readRef range <&> \r -> ll r `lensMap` safeList   -- todo
-    ll :: Bool -> Lens' [(Integer, Bool)] Int
-    ll r = lens length extendList where
-        extendList xs n = take n $ (reverse . drop 1 . reverse) xs ++
-            (uncurry zip . (iterate (+ if r then 1 else 0) *** repeat)) (head $ reverse xs ++ [def])
-
-    mapSel f (x, y) = (if y then f x else x, y)
-
-    (f *** g) (a, b) = (f a, g b)
+distance (x1, y1) (x2, y2)
+    = sqrt $ (x2-x1)^2 + (y2-y1)^2
 
 ----------- part of the toolkit
-
-listEditor :: WidgetContext s => a -> [Ref s a -> RefCreator s ()] -> Ref s [a] -> RefCreator s ()
-listEditor _ [] _ = error "not enought editors for listEditor"
-listEditor def (ed: eds) r = do
-    q <- extendRef r listLens (False, (def, []))
-    void $ (fst <$> readRef q) `switch` \case
-        False -> return ()
-        True  -> do
-            ed $ _2 . _1 `lensMap` q
-            listEditor def eds $ _2 . _2 `lensMap` q
-
-listLens :: Lens' (Bool, (a, [a])) [a]
-listLens = lens get set where
-    get (False, _) = []
-    get (True, (l, r)) = l: r
-    set (_, x) [] = (False, x)
-    set _ (l: r) = (True, (l, r))
 
 -- | Undo-redo state transformation.
 undoTr
