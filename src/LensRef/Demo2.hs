@@ -154,7 +154,7 @@ crud = do
     names   <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
     name    <- newRef ("Romba", "John")
     prefix  <- newRef ""
-    sel     <- lensMap _1 <$> extendRef prefix (iso snd ((,) Nothing)) (Nothing, "")
+    sel     <- onChangeEq_ (readRef prefix) $ const $ return Nothing
     let create = do
             n <- readerToWriter $ readRef name
             modRef names (++ [n])
