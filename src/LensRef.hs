@@ -169,7 +169,7 @@ newRef a = RefCreator $ do
             RefReader $ lift . tell $ Set.singleton ir
             getVal
 
-    let wr rep init upd = RefCreator $ do
+    let unsafeWriterToCreator rep init upd = RefCreator $ do
 
             let gv = mapStateT (fmap (\((a,st),ids) -> ((a,ids),st)) . runWriterT)
                         $ runHandT $ currentValue' getVal >>= upd
@@ -237,8 +237,8 @@ newRef a = RefCreator $ do
     pure $ Ref $ \ff ->
         buildRefAction ff
             am
-            (RefWriter . fmap fst . runWriterT . unRefCreator . wr False True . (return .))
-            (wr True)
+            (RefWriter . fmap fst . runWriterT . unRefCreator . unsafeWriterToCreator False True . (return .))
+            (unsafeWriterToCreator True)
 
 
 extendRef :: (Applicative m, Monad m) => Ref m b -> Lens' a b -> a -> RefCreator m (Ref m a)
@@ -381,8 +381,8 @@ instance MonadTrans RefWriter where
 instance MonadTrans RefCreator where
     lift = RefCreator . lift . lift
 
-wr :: (Monad m, Applicative m) => RefWriter m a -> RefCreator m a
-wr = RefCreator . lift . runRefWriterT
+unsafeWriterToCreator :: (Monad m, Applicative m) => RefWriter m a -> RefCreator m a
+unsafeWriterToCreator = RefCreator . lift . runRefWriterT
 
 -------------------------- aux
 
@@ -495,20 +495,6 @@ joinRef mr = Ref $ \f -> joinRefAction (mr <&> \r -> runRef r f)
 
 writeRef :: (Monad m, Applicative m) => Ref m a -> a -> RefWriter m ()
 writeRef (Ref r) = runWriterAction . r . const . Identity
-
---    -- | @modRef r f@ === @readRef r >>= writeRef r . f@
-modRef :: (Monad m, Applicative m) => Ref m a -> (a -> a) -> RefWriter m ()
-r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
-
-
-memoRead :: (Monad m, Applicative m) => RefCreator m a -> RefCreator m (RefCreator m a)
-memoRead g = do
-    s <- newRef Nothing
-    pure $ readerToCreator (readRef s) >>= \x -> case x of
-        Just a -> pure a
-        _ -> g >>= \a -> do
-            wr $ writeRef s $ Just a
-            pure a
 
 ------------- aux
 
@@ -653,7 +639,7 @@ newReference st a0 = do
     let am :: RefReader m a
         am = RefReader $ RefCreator $ \st -> getVal st oir i
 
-    let wr rep init upd = RefCreator $ \st -> do
+    let unsafeWriterToCreator rep init upd = RefCreator $ \st -> do
 
             RefState aold_ nas <- readSimpleRef oir
             let aold = unsafeCoerce aold_ :: a
@@ -713,8 +699,8 @@ newReference st a0 = do
 
     pure $ Ref $ \ff ->
         buildRefAction ff am
-            (RefWriter . wr False True . (return .))
-            (wr True)
+            (RefWriter . unsafeWriterToCreator False True . (return .))
+            (unsafeWriterToCreator True)
 
 
 regTrigger :: forall m a . RefContext m => GlobalVars m -> Id m -> Ids m -> (a -> m a) -> m ()
@@ -972,7 +958,7 @@ instance RefContext m => Monad (RefReader m) where
     RefReader mr >>= f = RefReader $ mr >>= runRefReaderT . f
 
 
-
+currentValue :: RefContext m => RefReader m a -> RefReader m a
 currentValue (RefReaderTPure a) = RefReaderTPure a
 currentValue (RefReader (RefCreator m)) = RefReader $ RefCreator $ \st -> noDependency st $ m st
 
@@ -991,7 +977,8 @@ instance MonadTrans RefWriter where
 instance MonadTrans RefCreator where
     lift m = RefCreator $ \_ -> m
 
-wr = runRefWriterT
+unsafeWriterToCreator :: RefContext m => RefWriter m a -> RefCreator m a
+unsafeWriterToCreator = runRefWriterT
 
 ------------------------
 
@@ -1098,18 +1085,6 @@ joinRef mr = Ref $ \f -> joinRefAction (mr <&> \r -> runRef r f)
 writeRef :: RefContext m => Ref m a -> a -> RefWriter m ()
 writeRef (Ref r) = id . runWriterAction . r . const . Identity
 
-modRef :: RefContext m => Ref m a -> (a -> a) -> RefWriter m ()
-r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
-
-memoRead :: RefContext m => RefCreator m a -> RefCreator m (RefCreator m a)
-memoRead g = do
-    s <- newRef Nothing
-    pure $ readerToCreator (readRef s) >>= \x -> case x of
-        Just a -> pure a
-        _ -> g >>= \a -> do
-            wr $ writeRef s $ Just a
-            pure a
-
 ---------------- aux
 
 mergeBy :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
@@ -1127,6 +1102,19 @@ mergeBy p (x:xs) (y:ys) = case p x y of
 -- | TODO
 data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 
+modRef :: RefContext m => Ref m a -> (a -> a) -> RefWriter m ()
+r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
+
+memoRead :: RefContext m => RefCreator m a -> RefCreator m (RefCreator m a)
+memoRead g = do
+    s <- newRef Nothing
+    pure $ readerToCreator (readRef s) >>= \x -> case x of
+        Just a -> pure a
+        _ -> g >>= \a -> do
+            unsafeWriterToCreator $ writeRef s $ Just a
+            pure a
+
+--------------------------------------------------------------------------------
 
 instance (IsString str, RefContext s) => IsString (RefReader s str) where
     fromString = pure . fromString
