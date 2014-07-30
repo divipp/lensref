@@ -860,6 +860,20 @@ runTests = do
             writeRef r False
             message' "False"
 
+    runTest "issue6b" $ do
+        r <- newRef True
+        void $ onChangeMemo (readRef r) $ \b -> if b
+            then return $ return ()
+            else do
+                q <- extendRef r id undefined
+                return $ readerToCreator (readRef q) >>= message . show
+        return $ do
+            writeRef r False
+            message' "False"
+            writeRef r True
+            writeRef r False
+            message' "False"
+
     return ()
 
 
