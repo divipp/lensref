@@ -110,7 +110,7 @@ data UpdateFunState m = UpdateFunState
 -- Handlers are added on trigger registration.
 -- The registered triggers may be killed, blocked and unblocked via the handler.
 -- invariant property: in the St state the ... is changed only
-type Handler m = RegionStatusChange -> MonadMonoid (StateT (St m) m) ()
+type Handler m = RegionStatusChange -> StateT (St m) m ()
 
 -- collecting identifiers of references on whose values the return value depends on
 newtype RefReader (m :: * -> *) a
@@ -146,9 +146,9 @@ instance RefContext m => RefAction (RegisterAction m) where
         register r True $ \kill -> do
             runHandler $ kill Kill
             fmap fst . getHandler . ($ init) . runRegisterAction =<< currentValue' m
-        RefCreator $ tell $ \msg -> MonadMonoid $ do
+        RefCreator $ tell $ \msg -> do
             h <- runRefWriterT $ readerToWriter $ readRef r
-            runMonadMonoid $ h msg
+            h msg
 
 
          
@@ -226,7 +226,7 @@ newRef a = RefCreator $ do
                     f Block   = Just $ set alive False
                     f Unblock = Just $ set alive True
 
-                tell $ \msg -> MonadMonoid $ do
+                tell $ \msg -> do
 
                         -- needed only for efficiency
                         when (msg == Kill) $ do
@@ -260,9 +260,9 @@ onChange_ m f = do
     register r True $ \(h, _) -> do
         runHandler $ h Kill
         currentValue' m >>= getHandler . f
-    RefCreator $ tell $ \msg -> MonadMonoid $ do
+    RefCreator $ tell $ \msg -> do
         (h, _) <- runRefWriterT $ readerToWriter $ readRef r
-        runMonadMonoid $ h msg
+        h msg
     return $ lensMap _2 r
 
 onChangeEq :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (RefReader m b)
@@ -279,18 +279,18 @@ onChangeEq_ m f = do
             runHandler $ h Kill
             hb <- getHandler $ f a
             return ((== a), hb)
-    RefCreator $ tell $ \msg -> MonadMonoid $ do
+    RefCreator $ tell $ \msg -> do
         (_, (h, _)) <- runRefWriterT $ readerToWriter $ readRef r
-        runMonadMonoid $ h msg
+        h msg
     return $ lensMap (_2 . _2) r
 
 onChangeMemo :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m (RefCreator m b)) -> RefCreator m (RefReader m b)
 onChangeMemo mr f = do
     r <- newRef ((const False, ((error "impossible #2", mempty, mempty) , error "impossible #1")), [])
     register r True upd
-    RefCreator $ tell $ \msg -> MonadMonoid $ do
+    RefCreator $ tell $ \msg -> do
         ((_, ((_, h1, h2), _)), _) <- runRefWriterT $ readerToWriter $ readRef r
-        runMonadMonoid $ h1 msg >> h2 msg
+        h1 msg >> h2 msg
     return $ fmap (snd . snd . fst) $ readRef r
   where
     upd st@((p, ((m'',h1'',h2''), _)), memo) = do
@@ -313,11 +313,11 @@ onChangeMemo mr f = do
 
 onRegionStatusChange_ :: RefContext m => (RegionStatusChange -> RefReader m (m ())) -> RefCreator m ()
 onRegionStatusChange_ h
-    = RefCreator $ tell $ MonadMonoid . runRefWriterT . join . readerToWriter . fmap lift . h
+    = RefCreator $ tell $ runRefWriterT . join . readerToWriter . fmap lift . h
 
 onRegionStatusChange :: RefContext m => (RegionStatusChange -> m ()) -> RefCreator m ()
 onRegionStatusChange h
-    = RefCreator $ tell $ MonadMonoid . runRefWriterT . lift . h
+    = RefCreator $ tell $ runRefWriterT . lift . h
 
 runRefCreator :: forall m a . RefContext m => ((forall b . RefWriter m b -> m b) -> RefCreator m a) -> m a
 runRefCreator f = do
@@ -351,8 +351,8 @@ mapRefCreator f = RefCreator . f . unRefCreator
 unsafeGet :: Dyn -> a
 unsafeGet (Dyn a) = unsafeCoerce a
 
-runHandler :: RefContext m => MonadMonoid (StateT (St m) m) () -> HandT m ()
-runHandler = HandT . mapStateT lift . runMonadMonoid
+runHandler :: RefContext m => StateT (St m) m () -> HandT m ()
+runHandler = HandT . mapStateT lift
 
 ----------------------------------------- lenses
 
@@ -384,6 +384,10 @@ instance MonadTrans RefCreator where
 
 unsafeWriterToCreator :: RefContext m => RefWriter m a -> RefCreator m a
 unsafeWriterToCreator = RefCreator . lift . runRefWriterT
+
+instance Monad m => Monoid (StateT (St m) m ()) where
+    mempty = return ()
+    mappend = (>>)
 
 -------------------------- aux
 
@@ -493,18 +497,6 @@ writeRef :: RefContext m => Ref m a -> a -> RefWriter m ()
 writeRef (Ref r) = runWriterAction . r . const . Identity
 
 ------------- aux
-
-newtype MonadMonoid m a = MonadMonoid
-    { runMonadMonoid :: m a }
-        deriving (Monad, Applicative, Functor)
-
-instance MonadTrans MonadMonoid where
-    lift = MonadMonoid
-
--- Applicative would be enough
-instance (Monad m, Monoid a) => Monoid (MonadMonoid m a) where
-    mempty = MonadMonoid $ return mempty
-    MonadMonoid a `mappend` MonadMonoid b = MonadMonoid $ liftM2 mappend a b
 
 merge :: Ord a => [a] -> [a] -> [a]
 merge [] xs = xs
@@ -765,6 +757,7 @@ onChange m f = RefCreator $ \st -> do
         (h, _) <- r
         h msg
     return $ RefCreator $ \_ -> r <&> snd
+
 
 onChange_ :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
 onChange_ m f = RefCreator $ \st -> do
