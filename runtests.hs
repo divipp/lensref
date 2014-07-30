@@ -843,6 +843,23 @@ runTests = do
             writeRef r True
             message' "eTrue"
 
+    runTest "issue6" $ do
+        r <- newRef True
+        q <- onChangeMemo (readRef r) $ \b -> if b
+            then return $ return $ return True
+            else do
+                v <- extendRef r id undefined
+                return $ return $ readRef v
+        void $ onChange (join q) $ message . show
+        return $ do
+            message' "True"
+            writeRef r False
+            message' "False"
+            writeRef r True
+            message' "True"
+            writeRef r False
+            message' "False"
+
     return ()
 
 
