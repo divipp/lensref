@@ -251,7 +251,10 @@ extendRef m k a0 = do
     return r
 
 onChange :: (Applicative m, Monad m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (RefReader m b)
-onChange m f = do
+onChange r f = fmap readRef $ onChange_ r f
+
+onChange_ :: (Applicative m, Monad m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
+onChange_ m f = do
     r <- newRef (mempty, error "impossible #4")
     register r True $ \(h, _) -> do
         runHandler $ h Kill
@@ -259,7 +262,10 @@ onChange m f = do
     RefCreator $ tell $ \msg -> MonadMonoid $ do
         (h, _) <- runRefWriterT $ readerToWriter $ readRef r
         runMonadMonoid $ h msg
-    return $ fmap snd $ readRef r
+    return $ lensMap _2 r
+
+onChangeEq :: (Eq a, Monad m, Applicative m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (RefReader m b)
+onChangeEq r f = fmap readRef $ onChangeEq_ r f
 
 onChangeEq_ :: (Eq a, Monad m, Applicative m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
 onChangeEq_ m f = do
@@ -493,10 +499,6 @@ writeRef (Ref r) = runWriterAction . r . const . Identity
 --    -- | @modRef r f@ === @readRef r >>= writeRef r . f@
 modRef :: (Monad m, Applicative m) => Ref m a -> (a -> a) -> RefWriter m ()
 r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
-
-onChangeEq :: (Eq a, Monad m, Applicative m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (RefReader m b)
-onChangeEq r f = fmap readRef $ onChangeEq_ r f
-
 
 
 memoRead :: (Monad m, Applicative m) => RefCreator m a -> RefCreator m (RefCreator m a)
