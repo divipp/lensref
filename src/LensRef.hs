@@ -84,7 +84,11 @@ type Ids (m :: * -> *) = Set.IntSet
 type TId (m :: * -> *) = Int
 type TIds (m :: * -> *) = Set.IntSet
 
-type St m = (ValSt, TriggerSt m, RevMap m)
+data St m = St
+    { _values   :: ValSt
+    , _triggers :: TriggerSt m
+    , _revmap   :: RevMap m
+    }
 
 -- values of references
 type ValSt = Map.IntMap Dyn
@@ -150,19 +154,16 @@ instance RefContext m => RefAction (RegisterAction m) where
             h <- runRefWriterT $ readerToWriter $ readRef r
             h msg
 
-
-         
-
 -------------------------------------
 
 newRef :: forall m a . RefContext m => a -> RefCreator m (Ref m a)
 newRef a = RefCreator $ do
-    ir <- use $ _3_1 . to nextKey
+    ir <- use $ values . to nextKey
 
     let getVal :: RefReader m a
         getVal = RefReader $ asks $ unsafeGet . fromMaybe (error "fatal: cant find ref value") . Map.lookup ir
         setVal :: MonadState (St m) n => a -> n ()
-        setVal a = _3_1 %= Map.insert ir (Dyn a)
+        setVal a = values %= Map.insert ir (Dyn a)
 
     setVal a
 
@@ -179,8 +180,8 @@ newRef a = RefCreator $ do
 
             when init $ lift $ runRefWriterT $ do
 
-                st_ <- use _3_2
-                revmap <- use _3_3
+                st_ <- use triggers
+                revmap <- use revmap
 
                 let st = Map.insert (-1) (UpdateFunState True (ir, mempty) $ setVal a) st_
 
@@ -201,7 +202,7 @@ newRef a = RefCreator $ do
 
             when rep $ do
 
-                ri <- use $ _3_2 . to nextKey
+                ri <- use $ triggers . to nextKey
 
                 -- needed only for efficiency
                 let changeRev f = Map.unionWith f . Map.fromSet (const $ Set.singleton ri)
@@ -211,16 +212,16 @@ newRef a = RefCreator $ do
                         setVal a
 
                         -- needed only for efficiency
-                        ih' <- use $ _3_2 . to (Map.! ri) . dependencies . _2
-                        _3_3 %= changeRev (flip Set.difference) (ih' `Set.difference` ih)
-                        _3_3 %= changeRev Set.union (ih `Set.difference` ih')
+                        ih' <- use $ triggers . to (Map.! ri) . dependencies . _2
+                        revmap %= changeRev (flip Set.difference) (ih' `Set.difference` ih)
+                        revmap %= changeRev Set.union (ih `Set.difference` ih')
 
-                        _3_2 %= Map.adjust (set dependencies (ir, ih)) ri
+                        triggers %= Map.adjust (set dependencies (ir, ih)) ri
 
-                _3_2 %= Map.insert ri (UpdateFunState True (ir, ih) modReg)
+                triggers %= Map.insert ri (UpdateFunState True (ir, ih) modReg)
 
                 -- needed only for efficiency
-                _3_3 %= changeRev Set.union ih
+                revmap %= changeRev Set.union ih
 
                 let f Kill    = Nothing
                     f Block   = Just $ set alive False
@@ -230,10 +231,10 @@ newRef a = RefCreator $ do
 
                         -- needed only for efficiency
                         when (msg == Kill) $ do
-                            ih' <- use $ _3_2 . to (fromMaybe mempty . fmap (^. dependencies . _2) . Map.lookup ri)
-                            _3_3 %= changeRev (flip Set.difference) ih'
+                            ih' <- use $ triggers . to (fromMaybe mempty . fmap (^. dependencies . _2) . Map.lookup ri)
+                            revmap %= changeRev (flip Set.difference) ih'
 
-                        _3_2 %= Map.update ((f msg <*>) . pure) ri
+                        triggers %= Map.update ((f msg <*>) . pure) ri
 
     pure $ Ref $ \ff ->
         buildRefAction ff
@@ -338,7 +339,7 @@ register
 register r init k = runRegisterAction (runRef r k) init
 
 currentValue' :: RefContext m => RefReader m a -> HandT m a
-currentValue' = HandT . readerToState (^. _3_1) . mapReaderT (mapWriterT $ return . runIdentity) . runRefReaderT
+currentValue' = HandT . readerToState (^. values) . mapReaderT (mapWriterT $ return . runIdentity) . runRefReaderT
 
 dropHandler :: RefContext m => RefCreator m a -> RefCreator m a
 dropHandler = mapRefCreator $ lift . fmap fst . runWriterT
@@ -371,10 +372,10 @@ readRef :: RefContext m => Ref m a -> RefReader m a
 readRef r = runReaderAction $ runRef r Const
 
 readerToCreator :: RefContext m => RefReader m a -> RefCreator m a
-readerToCreator = RefCreator . lift . readerToState (^. _3_1) . mapReaderT (return . fst . runWriter) . runRefReaderT
+readerToCreator = RefCreator . lift . readerToState (^. values) . mapReaderT (return . fst . runWriter) . runRefReaderT
 
 readerToWriter :: RefContext m => RefReader m a -> RefWriter m a
-readerToWriter = RefWriter . readerToState (^. _3_1) . mapReaderT (return . fst . runWriter) . runRefReaderT
+readerToWriter = RefWriter . readerToState (^. values) . mapReaderT (return . fst . runWriter) . runRefReaderT
 
 instance MonadTrans RefWriter where
     lift = RefWriter . lift
@@ -511,14 +512,18 @@ nextKey = maybe 0 ((+1) . fst . fst) . Map.maxViewWithKey
 
 --------------
 
-_3_1 :: Lens (a,b,c) (a',b,c) a a'
-_3_1 k ~(a,b,c) = k a <&> \a' -> (a',b,c)
+instance Monoid (St m) where
+    mempty = St mempty mempty mempty
+    St a b c `mappend` St a' b' c' = St (a `mappend` a') (b `mappend` b') (c `mappend` c')
 
-_3_2 :: Lens (a,b,c) (a,b',c) b b'
-_3_2 k ~(a,b,c) = k b <&> \b' -> (a,b',c)
+values :: Lens' (St m) ValSt
+values k st = k (_values st) <&> \v -> st {_values = v}
 
-_3_3 :: Lens (a,b,c) (a,b,c') c c'
-_3_3 k ~(a,b,c) = k c <&> \c' -> (a,b,c')
+triggers :: Lens' (St m) (TriggerSt m)
+triggers k st = k (_triggers st) <&> \v -> st {_triggers = v}
+
+revmap :: Lens' (St m) (RevMap m)
+revmap k st = k (_revmap st) <&> \v -> st {_revmap = v}
 
 --------------------------------------------------------------------------------
 #else
