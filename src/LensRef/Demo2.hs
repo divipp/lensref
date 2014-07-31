@@ -263,74 +263,7 @@ undoLens eq = lens get set where
     set (xs, _) x = (x : xs, [])
 
 
---------------------------------------------------------------------------------
-
-checkbox :: WidgetContext s => Ref s Bool -> RefCreator s ()
-checkbox r = primButton (text . show <$> readRef r) (pure True) $ modRef r not
-
-combobox :: (WidgetContext s, Eq a) => Ref s a -> Writer [(a, Doc)] () -> RefCreator s ()
-combobox i as = horizontally $ forM_ (execWriter as) $ \(n, s) ->
-    primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure s) (pure True) $ writeRef i n
-
--- | Button.
-button
-    :: WidgetContext s
-    => RefReader s Doc     -- ^ dynamic label of the button
-    -> RefReader s (Maybe (RefWriter s ()))     -- ^ when the @Maybe@ readRef is @Nothing@, the button is inactive
-    -> RefCreator s ()
-button r fm
-    = primButton r (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
-
--- | Button which inactivates itself automatically.
-smartButton
-    :: WidgetContext s
-    => RefReader s Doc   -- ^ dynamic label of the button
-    -> EqRef s a         -- ^ underlying reference
-    -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference.
-                  --   When the button is pressed the reference is modified with this function.
-    -> RefCreator s ()
-smartButton s r f
-    = primButton s (readRef r >>= changing r . f) (modRef r f)
-
--- | Label entry.
-entry :: WidgetContext s => Ref s String -> RefCreator s ()
-entry = primEntry (pure True) (pure True)
-
-entryShow = entryShowActive (pure True)
-
-entryShowActive :: (Show a, Read a, RefClass r, WidgetContext s) => RefReader s Bool -> r s a -> RefCreator s (RefReader s Bool)
-entryShowActive active r = do
-    x <- readerToCreator $ readRef r
-    v <- extendRef (toRef r) (lens fst set') (x, Nothing)
-    let ok = isNothing . snd <$> readRef v
-    primEntry active ok $ lens get set `lensMap` v
-    return ok
-  where
-    set' t@(v',_) v | show v == show v' = t
-    set' _ v = (v, Nothing)
-
-    get (_, Just s) = s
-    get (v, _) = show v
-
-    set (v, _) s = case reads s of
-        ((x,""):_) -> (x, Nothing)
-        _ -> (v, Just s)
-
-type NamedWidgets s = WriterT [(Doc, RefCreator s ())] (RefCreator s)
-
-notebook :: WidgetContext s => NamedWidgets s () -> RefCreator s ()
-notebook m = do
-    ws <- execWriterT m
-    i <- newRef (0 :: Int)
-    vertically $ do
-        horizontally $ forM_ (zip [0..] ws) $ \(n, (s, _)) ->
-            primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure s) (pure True) $ writeRef i n
-        padding $ void $ readRef i `switch` snd . (ws !!)
-
-item :: MonadWriter [(a, b)] m => a -> b -> m ()
-item s m = tell [(s, m)]
-
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- Widget API
 --------------------------------------------------------------------------------
 
 type Time  = Rational   -- seconds elapsed from program start
@@ -338,16 +271,12 @@ type Delay = Rational   -- duration in seconds
 
 infix 1 `switch`
 
+type NamedWidgets s = WriterT [(Doc, RefCreator s ())] (RefCreator s)
+
 class RefContext s => WidgetContext s where
 
     label    ::             Doc -> RefCreator s ()
     dynLabel :: RefReader s Doc -> RefCreator s ()
-
-    primButton
-        :: RefReader s Doc        -- ^ dynamic label of the button
-        -> RefReader s Bool       -- ^ the button is active when this returns @True@
-        -> RefWriter s ()         -- ^ the action to do when the button is pressed
-        -> RefCreator s ()
 
     primEntry
         :: RefClass r
@@ -355,6 +284,62 @@ class RefContext s => WidgetContext s where
         -> RefReader s Bool
         -> r s String
         -> RefCreator s ()
+
+    -- | Label entry.
+    entry :: Ref s String -> RefCreator s ()
+    entry = primEntry (pure True) (pure True)
+
+    entryShow :: (Show a, Read a, RefClass r) => r s a -> RefCreator s (RefReader s Bool)
+    entryShow = entryShowActive (pure True)
+
+    entryShowActive :: (Show a, Read a, RefClass r) => RefReader s Bool -> r s a -> RefCreator s (RefReader s Bool)
+    entryShowActive active r = do
+        x <- readerToCreator $ readRef r
+        v <- extendRef (toRef r) (lens fst set') (x, Nothing)
+        let ok = isNothing . snd <$> readRef v
+        primEntry active ok $ lens get set `lensMap` v
+        return ok
+      where
+        set' t@(v',_) v | show v == show v' = t
+        set' _ v = (v, Nothing)
+
+        get (_, Just s) = s
+        get (v, _) = show v
+
+        set (v, _) s = case reads s of
+            ((x,""):_) -> (x, Nothing)
+            _ -> (v, Just s)
+
+    primButton
+        :: RefReader s Doc        -- ^ dynamic label of the button
+        -> RefReader s Bool       -- ^ the button is active when this returns @True@
+        -> RefWriter s ()         -- ^ the action to do when the button is pressed
+        -> RefCreator s ()
+
+    -- | Button.
+    button
+        :: RefReader s Doc     -- ^ dynamic label of the button
+        -> RefReader s (Maybe (RefWriter s ()))     -- ^ when the @Maybe@ readRef is @Nothing@, the button is inactive
+        -> RefCreator s ()
+    button r fm
+        = primButton r (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
+
+    -- | Button which inactivates itself automatically.
+    smartButton
+        :: RefReader s Doc   -- ^ dynamic label of the button
+        -> EqRef s a         -- ^ underlying reference
+        -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference.
+                      --   When the button is pressed the reference is modified with this function.
+        -> RefCreator s ()
+    smartButton s r f
+        = primButton s (readRef r >>= changing r . f) (modRef r f)
+
+    checkbox :: Ref s Bool -> RefCreator s ()
+    checkbox r = primButton (text . show <$> readRef r) (pure True) $ modRef r not
+
+    combobox :: Eq a => Ref s a -> Writer [(a, Doc)] () -> RefCreator s ()
+    combobox i as = horizontally $ forM_ (execWriter as) $ \(n, s) ->
+        primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure s) (pure True) $ writeRef i n
 
     padding      :: RefCreator s a -> RefCreator s a
     vertically   :: RefCreator s a -> RefCreator s a
@@ -375,7 +360,19 @@ class RefContext s => WidgetContext s where
 
     currentTime  :: s Time
 
---------------------------------------------------------------------------------
+    notebook :: NamedWidgets s () -> RefCreator s ()
+    notebook m = do
+        ws <- execWriterT m
+        i <- newRef (0 :: Int)
+        vertically $ do
+            horizontally $ forM_ (zip [0..] ws) $ \(n, (s, _)) ->
+                primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure s) (pure True) $ writeRef i n
+            padding $ void $ readRef i `switch` snd . (ws !!)
+
+item :: MonadWriter [(a, b)] m => a -> b -> m ()
+item s m = tell [(s, m)]
+
+-------------------------------------------------------------------------------- API implementation
 --------------------------------------------------------------------------------
 
 instance RefContext m => WidgetContext (WContext m) where
@@ -536,7 +533,7 @@ runWidget out buildwidget = do
             , \t -> runRefWriter (delay t) >> draw
             )
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- Doc data type
 --------------------------------------------------------------------------------
 
 data Doc = Doc Int [String] deriving Eq
@@ -592,7 +589,7 @@ redbackground   = 41
 greenbackground = 42
 bluebackground  = 44
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- Aux
 --------------------------------------------------------------------------------
 
 bool a _ True = a
