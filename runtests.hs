@@ -835,14 +835,14 @@ runTests = do
         w <- onChangeMemo (readRef r) $ \b -> if b
             then fmap return $ onChange (readRef r) $ return . ("e" ++) . show
             else return $ return $ return "F"
-        _ <- onChange (join w) message
+        void $ onChange (join w) message
         return $ do
             message' "eTrue"
             writeRef r False
             message' "F"
             writeRef r True
             message' "eTrue"
-
+{-
     runTest "issue6" $ do
         r <- newRef True
         q <- onChangeMemo (readRef r) $ \b -> if b
@@ -873,7 +873,7 @@ runTests = do
             writeRef r True
             writeRef r False
             message' "False"
-
+-}
     return ()
 
 
