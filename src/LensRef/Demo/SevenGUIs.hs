@@ -44,9 +44,8 @@ counter = do
     r <- newRef (0 :: Int)
     let inc = modRef r (+1)
     -- view
-    horizontally $ do
-        dynLabel $ show <$> readRef r
-        button "Count" $ pure $ Just inc
+    dynLabel "Value" $ show <$> readRef r
+    button "Count" $ pure $ Just inc
 
 -------------------------------------------------------------------------------- 7guis #2
 
@@ -56,11 +55,8 @@ temperatureConverter = do
     celsius <- newRef (0 :: Prec2 Double)
     let fahrenheit = multiplying 1.8 . adding 32 `lensMap` celsius
     -- view
-    horizontally $ do
-        void $ entryShow celsius
-        label "Celsius = "
-        void $ entryShow fahrenheit
-        label "Fahrenheit"
+    void $ entryShow "Celsius" celsius
+    void $ entryShow "Fahrenheit" fahrenheit
 
 --------------- defined in Control.Lens
 
@@ -83,7 +79,7 @@ flightBooker = do
     maybeenddate <- newRef (Nothing :: Maybe Date)
     -- view
     void $ readRef booked `switch` \case
-      True -> dynLabel $ do
+      True -> dynLabel "Notice" $ do
         start <- readRef startdate
         readRef maybeenddate <&> \case
             Just end -> "You have booked a return flight on " ++ show start ++ "-" ++ show end
@@ -101,8 +97,8 @@ flightBooker = do
         combobox isreturn $ do
             item False "one-way flight"
             item True  "return flight"
-        startok <- entryShow startdate
-        endok   <- entryShowActive (readRef isreturn) $ lensMap _2 boolenddate
+        startok <- entryShow "Start" startdate
+        endok   <- entryShowActive "End" (readRef isreturn) $ lensMap _2 boolenddate
         button "Book" $ bookaction $ (&&) <$> startok <*> endok
 
 ---------- part of the toolkit
@@ -126,13 +122,9 @@ timer = do
         reset = writeRef start =<< lift currentTime
     -- view
     vertically $ do
-        horizontally $ do
-            label "Elapsed Time:"
-            dynLabel $ (++"%") . show . (*100) . (^. convert . prec2) <$> ratio
-        dynLabel $ (++"s") . show . (^. convert . prec2) <$> elapsed
-        horizontally $ do
-            label "Duration:"
-            void $ entryShow $ lensMap (convert . prec2 . nonNegative) duration
+        dynLabel "Elapsed Time (percent)" $ (++"%") . show . (*100) . (^. convert . prec2) <$> ratio
+        dynLabel "Elapsed Time" $ (++"s") . show . (^. convert . prec2) <$> elapsed
+        void $ entryShow "Duration" $ lensMap (convert . prec2 . nonNegative) duration
         button "Reset" $ pure $ Just reset
 
 ---------- part of the toolkit
@@ -166,10 +158,10 @@ crud = do
             <*> (zip [0..] <$> readRef names)
     --------- view
     vertically $ do
-        horizontally $ label "Filter prefix:" >> entry prefix
+        entry "Filter prefix" prefix
         listbox sel $ map (\(i, (s, n)) -> (i, s ++ ", " ++ n)) <$> filterednames
-        horizontally $ label "Name:"    >> entry (lensMap _2 name)
-        horizontally $ label "Surname:" >> entry (lensMap _1 name)
+        entry "Name" $ lensMap _2 name
+        entry "Surname" $ lensMap _1 name
         horizontally $ do
             button "Create" $ pure $ Just create
             button "Update" $ fmap <$> (update <$> readRef name) <*> readRef sel
@@ -202,18 +194,15 @@ circleDrawer = do
         button "Undo" undo
         button "Redo" redo
     horizontally $ do
-        label "MousePos:"
-        void $ entryShow mousepos
+        void $ entryShow "MousePos" mousepos
         primButton "MouseClick" (not <$> readRef (lensMap _1 sel)) click
-    dynLabel $ view <&> \l -> unlines [show p ++ " " ++ show d | (p, d) <- l]
+    dynLabel "Circles" $ view <&> \l -> unlines [show p ++ " " ++ show d | (p, d) <- l]
     void $ (readRef $ lensMap _1 sel) `switch` \case
       False -> return ()
       True  -> do
+        dynLabel "Adjust diameter of circle at" $ show . fst <$> ((!!) <$> readRef circles <*> readRef (lensMap (_2 . _1) sel))
         horizontally $ do
-            label "Adjust diameter of circle at"
-            dynLabel $ show . fst <$> ((!!) <$> readRef circles <*> readRef (lensMap (_2 . _1) sel))
-        horizontally $ do
-            void $ entryShow $ lensMap (_2 . _2 . nonNegative) sel
+            void $ entryShow "Diameter" $ lensMap (_2 . _2 . nonNegative) sel
             button "Done" $ pure $ Just commit
 
 distance (x1, y1) (x2, y2)
@@ -260,29 +249,30 @@ type NamedWidgets s = WriterT [(String, RefCreator s ())] (RefCreator s)
 
 class RefContext s => WidgetContext s where
 
-    label    ::             String -> RefCreator s ()
-    dynLabel :: RefReader s String -> RefCreator s ()
+    label    :: String -> RefCreator s ()
+    dynLabel :: String -> RefReader s String -> RefCreator s ()
 
     primEntry
         :: RefClass r
-        => RefReader s Bool
+        => String
+        -> RefReader s Bool
         -> RefReader s Bool
         -> r s String
         -> RefCreator s ()
 
     -- | Label entry.
-    entry :: Ref s String -> RefCreator s ()
-    entry = primEntry (pure True) (pure True)
+    entry :: String -> Ref s String -> RefCreator s ()
+    entry name = primEntry name (pure True) (pure True)
 
-    entryShow :: (Show a, Read a, RefClass r) => r s a -> RefCreator s (RefReader s Bool)
-    entryShow = entryShowActive (pure True)
+    entryShow :: (Show a, Read a, RefClass r) => String -> r s a -> RefCreator s (RefReader s Bool)
+    entryShow name = entryShowActive name (pure True)
 
-    entryShowActive :: (Show a, Read a, RefClass r) => RefReader s Bool -> r s a -> RefCreator s (RefReader s Bool)
-    entryShowActive active r = do
+    entryShowActive :: (Show a, Read a, RefClass r) => String -> RefReader s Bool -> r s a -> RefCreator s (RefReader s Bool)
+    entryShowActive name active r = do
         x <- readerToCreator $ readRef r
         v <- extendRef (toRef r) (lens fst set') (x, Nothing)
         let ok = isNothing . snd <$> readRef v
-        primEntry active ok $ lens get set `lensMap` v
+        primEntry name active ok $ lens get set `lensMap` v
         return ok
       where
         set' t@(v',_) v | show v == show v' = t
@@ -375,14 +365,17 @@ instance RefContext m => WidgetContext (WContext m) where
 
     label s = addLayout $ pure ((), pure $ color magenta $ text s)
 
-    dynLabel r = addControl (pure [Get $ r <&> text]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") . text <$> r)
+    dynLabel name r = horizontally $ do
+        label name
+        addControl (pure [Get $ r <&> text]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") . text <$> r)
 
     primButton name vis act
         = addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
             $ color <$> (bool grey magenta <$> vis) <*> name
 
-    primEntry active ok r
-        = addControl (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
+    primEntry name active ok r = horizontally $ do
+        label name
+        addControl (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
             $ color <$> (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
                     <*> (text . pad 7 . (++ " ") <$> readRef r)
       where
