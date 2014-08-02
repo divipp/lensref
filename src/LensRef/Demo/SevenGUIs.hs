@@ -362,8 +362,7 @@ class RefContext s => WidgetContext s where
         ws <- execWriterT m
         i <- newRef (0 :: Int)
         vertically $ do
-            horizontally $ forM_ (zip [0..] ws) $ \(n, (s, _)) ->
-                primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure (text s)) (pure True) $ writeRef i n
+            combobox i $ forM_ (zip [0..] ws) $ \(n, (s, _)) -> item n s
             padding $ void $ readRef i `switch` snd . (ws !!)
 
 item :: MonadWriter [(a, b)] m => a -> b -> m ()
