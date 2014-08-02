@@ -1,9 +1,7 @@
 
 Items are sorted by priority
 
-* Tutorial
-* Document ideas about state-based FRP and compare it with other FRP frameworks
-* More test cases for references
-* Add combinators to use pure lenses instead of impure ones
-
+* The scheduling of change propagation should be rewritten.
+* A tutorial should be written.
+* The documentation should be finished.
 
