@@ -686,7 +686,7 @@ newReference a0 = do
                             TriggerState _ (_, w) dep _ _ <- readSimpleRef n
                             RefState _ revDep <- readSimpleRef w
                             ls <- flip filterM (Map.toList revDep) $ \(_, na) -> do
-                                TriggerState alive (i, _) _ _ _ <- readSimpleRef na
+                                TriggerState _alive (i, _) _ _ _ <- readSimpleRef na
                                 pure $ {-alive &&-} not (Map.member i dep)
                             return ls
 

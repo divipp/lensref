@@ -49,8 +49,9 @@ library
                     LensRef.Context
                     LensRef
                     LensRef.EqRef
-                    LensRef.Demo
-                    LensRef.Demo2
+
+                    LensRef.Demo.Simple
+                    LensRef.Demo.SevenGUIs
 
   if flag(pure)
     cpp-options:

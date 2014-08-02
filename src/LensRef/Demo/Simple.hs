@@ -1,4 +1,4 @@
-module LensRef.Demo where
+module LensRef.Demo.Simple where
 
 import Data.Function
 import Control.Monad

@@ -7,7 +7,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-module LensRef.Demo2 where
+module LensRef.Demo.SevenGUIs where
 
 import Numeric (showFFloat)
 import Data.String (IsString (..))
@@ -75,8 +75,8 @@ multiplying n = iso (*n) (/n)
 
 type Date = NonNegative Integer
 
-booker :: forall s . WidgetContext s => RefCreator s ()
-booker = do
+flightBooker :: WidgetContext s => RefCreator s ()
+flightBooker = do
     -- model
     booked       <- newRef False
     startdate    <- newRef (0 :: Date)
@@ -91,9 +91,7 @@ booker = do
       False -> do
         -- view model
         boolenddate  <- extendRef maybeenddate maybeLens (False, 0)
-        let isreturn :: Ref s Bool
-            isreturn = lensMap _1 boolenddate
-            bookaction :: RefReader s Bool -> RefReader s (Maybe (RefWriter s ()))
+        let isreturn = lensMap _1 boolenddate
             bookaction parseok = do
                 ok    <- parseok
                 start <- readRef startdate
