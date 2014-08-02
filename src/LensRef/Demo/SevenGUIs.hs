@@ -24,7 +24,7 @@ import Lens.Family2.Stock
 import Lens.Family2.Unchecked
 
 import LensRef.Context
-import LensRef.EqRef
+import LensRef
 
 -------------------------------------------------------------------------------- 7guis #1
 
@@ -104,8 +104,12 @@ flightBooker = do
 ---------- part of the toolkit
 
 maybeLens :: Lens' (Bool, a) (Maybe a)
-maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
-                 (\(_,a) ma -> maybe (False, a) (\a' -> (True, a')) ma)
+maybeLens = lens (\(b, a) -> mkMaybe a b)
+                 (\(_, a) ma -> maybe (False, a) (\a' -> (True, a')) ma)
+
+mkMaybe :: a -> Bool -> Maybe a
+mkMaybe a True  = Just a
+mkMaybe _ False = Nothing
 
 -------------------------------------------------------------------------------- 7guis #4
 
@@ -195,7 +199,7 @@ circleDrawer = do
         button "Redo" redo
     horizontally $ do
         void $ entryShow "MousePos" mousepos
-        primButton "MouseClick" (not <$> readRef (lensMap _1 sel)) click
+        button "MouseClick" $ mkMaybe click <$> readRef (lensMap _1 sel)
     dynLabel "Circles" $ view <&> \l -> unlines [show p ++ " " ++ show d | (p, d) <- l]
     void $ (readRef $ lensMap _1 sel) `switch` \case
       False -> return ()
@@ -253,24 +257,23 @@ class RefContext s => WidgetContext s where
     dynLabel :: String -> RefReader s String -> RefCreator s ()
 
     primEntry
-        :: RefClass r
-        => String
+        :: String
         -> RefReader s Bool
         -> RefReader s Bool
-        -> r s String
+        -> Ref s String
         -> RefCreator s ()
 
     -- | Label entry.
     entry :: String -> Ref s String -> RefCreator s ()
     entry name = primEntry name (pure True) (pure True)
 
-    entryShow :: (Show a, Read a, RefClass r) => String -> r s a -> RefCreator s (RefReader s Bool)
+    entryShow :: (Show a, Read a) => String -> Ref s a -> RefCreator s (RefReader s Bool)
     entryShow name = entryShowActive name (pure True)
 
-    entryShowActive :: (Show a, Read a, RefClass r) => String -> RefReader s Bool -> r s a -> RefCreator s (RefReader s Bool)
+    entryShowActive :: (Show a, Read a) => String -> RefReader s Bool -> Ref s a -> RefCreator s (RefReader s Bool)
     entryShowActive name active r = do
         x <- readerToCreator $ readRef r
-        v <- extendRef (toRef r) (lens fst set') (x, Nothing)
+        v <- extendRef r (lens fst set') (x, Nothing)
         let ok = isNothing . snd <$> readRef v
         primEntry name active ok $ lens get set `lensMap` v
         return ok
@@ -298,16 +301,6 @@ class RefContext s => WidgetContext s where
         -> RefCreator s ()
     button s fm
         = primButton (text <$> s) (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
-
-    -- | Button which inactivates itself automatically.
-    smartButton
-        :: RefReader s String -- ^ dynamic label of the button
-        -> EqRef s a         -- ^ underlying reference
-        -> (a -> a)   -- ^ The button is active when this function is not identity on readRef of the reference.
-                      --   When the button is pressed the reference is modified with this function.
-        -> RefCreator s ()
-    smartButton s r f
-        = primButton (text <$> s) (readRef r >>= changing r . f) (modRef r f)
 
     checkbox :: Ref s Bool -> RefCreator s ()
     checkbox r = primButton (text . show <$> readRef r) (pure True) $ modRef r not
