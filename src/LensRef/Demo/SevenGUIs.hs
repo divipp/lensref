@@ -46,19 +46,46 @@ counter = do
     r <- newRef (0 :: Int)
     let inc = modRef r (+1)
     -- view
-    dynLabel "Value" $ show <$> readRef r
-    button "Count" $ pure $ Just inc
+    horizontally $ do
+        label  "Value" $ show <$> readRef r
+        button "Count" $ pure $ Just inc
+
+-------------------------------------------------------------------------------- 7guis #1 version 2
+
+counterV2 :: WidgetContext s => RefCreator s ()
+counterV2 = counterModel >>= counterView
+
+data Counter s = Counter
+    { counterValue :: RefReader s Int
+    , incrementCounter :: RefWriter s ()
+    }
+
+counterModel :: RefContext s => RefCreator s (Counter s)
+counterModel = do
+    r <- newRef (0 :: Int)
+    return Counter
+        { counterValue = readRef r
+        , incrementCounter = modRef r (+1)
+        }
+
+counterView :: WidgetContext s => Counter s -> RefCreator s ()
+counterView c = horizontally $ do
+    label  "Value" $ show <$> counterValue c
+    button "Count" $ pure $ Just $ incrementCounter c
 
 -------------------------------------------------------------------------------- 7guis #2
+
+type Temperature = Prec2 Double
 
 temperatureConverter :: WidgetContext s => RefCreator s ()
 temperatureConverter = do
     -- model
-    celsius <- newRef (0 :: Prec2 Double)
+    celsius <- newRef (0 :: Temperature)
     let fahrenheit = multiplying 1.8 . adding 32 `lensMap` celsius
     -- view
-    void $ entryShow "Celsius" celsius
-    void $ entryShow "Fahrenheit" fahrenheit
+    horizontally $ do
+        void $ entryShow "Celsius" celsius
+        void $ entryShow "Fahrenheit" fahrenheit
 
 --------------- defined in Control.Lens
 
@@ -81,7 +108,7 @@ flightBooker = do
     maybeenddate <- newRef (Nothing :: Maybe Date)
     -- view
     void $ readRef booked `switch` \case
-      True -> dynLabel "Notice" $ do
+      True -> label "Notice" $ do
         start <- readRef startdate
         readRef maybeenddate <&> \case
             Just end -> "You have booked a return flight on " ++ show start ++ "-" ++ show end
@@ -97,8 +124,8 @@ flightBooker = do
                 return $ (ok && maybe True (start <=) end, writeRef booked True) ^. maybeLens
         -- view view
         combobox isreturn $ do
-            item False "one-way flight"
-            item True  "return flight"
+            item False "One-way"
+            item True  "Return"
         startok <- entryShow "Start" startdate
         endok   <- entryShowActive "End" (readRef isreturn) $ lensMap _2 boolenddate
         button "Book" $ bookaction $ (&&) <$> startok <*> endok
@@ -115,12 +142,12 @@ mkMaybe _ False = Nothing
 
 -------------------------------------------------------------------------------- 7guis #4
 
-timer :: WidgetContext s => RefCreator s ()
-timer = do
+timer :: WidgetContext s => Rational -> RefCreator s ()
+timer refresh = do
     -- model
     duration <- newRef 10
     start <- newRef =<< lift currentTime
-    timer <- join <$> onChange (readRef start + readRef duration) (mkTimer (1/50))
+    timer <- join <$> onChange (readRef start + readRef duration) (mkTimer refresh)
     let elapsed = timer - readRef start
         ratio = per <$> elapsed <*> readRef duration where
             per _ 0 = 1
@@ -128,8 +155,8 @@ timer = do
         reset = writeRef start =<< lift currentTime
     -- view
     vertically $ do
-        dynLabel "Elapsed Time (percent)" $ (++"%") . show . (*100) . (^. convert . prec2) <$> ratio
-        dynLabel "Elapsed Time" $ (++"s") . show . (^. convert . prec2) <$> elapsed
+        label "Elapsed (percent)" $ (++"%") . show . (*100) . (^. convert . prec2) <$> ratio
+        label "Elapsed" $ (++"s") . show . (^. convert . prec2) <$> elapsed
         void $ entryShow "Duration" $ lensMap (convert . prec2 . nonNegative) duration
         button "Reset" $ pure $ Just reset
 
@@ -137,9 +164,13 @@ timer = do
 
 mkTimer :: WidgetContext s => Delay -> Time -> RefCreator s (RefReader s Time)
 mkTimer refresh end = do
-    x <- newRef =<< lift currentTime
-    void $ onChange (readRef x) $ \xt -> when (xt < end) $ asyncDo refresh $ writeRef x =<< lift currentTime
-    return $ readRef x
+    t <- lift currentTime
+    if end <= t
+      then return $ pure end
+      else do
+        x <- newRef t
+        void $ onChange (readRef x) $ \xt -> when (xt < end) $ asyncDo refresh $ writeRef x =<< lift currentTime
+        return $ readRef x
 
 
 -------------------------------------------------------------------------------- 7guis #5
@@ -180,7 +211,7 @@ circleDrawer :: forall s . WidgetContext s => RefCreator s ()
 circleDrawer = do
     -------- model
     mousepos <- newRef (0, 0 :: Prec2 Double)
-    circles  <- newRef [((0,2), 1), ((2,0), 1), ((0,0), 2)]
+    circles  <- newRef [((0,2), 1), ((0,0), 2)]
     selected <- onChange_ (readRef circles) $ const $ return Nothing
     (undo, redo)  <- undoTr (==) circles
     sel <- extendRef selected maybeLens (False, (0, 1))
@@ -192,21 +223,21 @@ circleDrawer = do
                    , distance mp p <= d + 0.01
                    ] ++
                    [ modRef circles $ insertBy (compare `on` snd) (mp, 1) ]
-        view = maybe id f <$> readRef selected <*> readRef circles  where
-            f (i, d) l = insertBy (compare `on` snd) (fst $ l !! i, d) $ take i l ++ drop (i+1) l
-        commit = readerToWriter view >>= writeRef circles
+        view = maybe id f <$> readRef selected <*> (map ((,) False) <$> readRef circles)  where
+            f (i, d) l = insertBy (compare `on` snd . snd) (True, (fst $ snd $ l !! i, d)) $ take i l ++ drop (i+1) l
+        commit = readerToWriter view >>= writeRef circles . map snd
     -------- view
     horizontally $ do
         button "Undo" undo
         button "Redo" redo
     horizontally $ do
         void $ entryShow "MousePos" mousepos
-        button "MouseClick" $ mkMaybe click <$> readRef (lensMap _1 sel)
-    dynLabel "Circles" $ view <&> \l -> unlines [show p ++ " " ++ show d | (p, d) <- l]
+        button "MouseClick" $ mkMaybe click . not <$> readRef (lensMap _1 sel)
+    label "Circles" $ view <&> \l -> unlines [show d ++ " at " ++ show p ++ if s then " filled" else "" | (s, (p, d)) <- l]
     void $ (readRef $ lensMap _1 sel) `switch` \case
       False -> return ()
       True  -> do
-        dynLabel "Adjust diameter of circle at" $ show . fst <$> ((!!) <$> readRef circles <*> readRef (lensMap (_2 . _1) sel))
+        label "Adjust diameter of circle at" $ show . fst <$> ((!!) <$> readRef circles <*> readRef (lensMap (_2 . _1) sel))
         horizontally $ do
             void $ entryShow "Diameter" $ lensMap (_2 . _2 . nonNegative) sel
             button "Done" $ pure $ Just commit
@@ -255,8 +286,7 @@ type NamedWidgets s = WriterT [(String, RefCreator s ())] (RefCreator s)
 
 class RefContext s => WidgetContext s where
 
-    label    :: String -> RefCreator s ()
-    dynLabel :: String -> RefReader s String -> RefCreator s ()
+    label :: String -> RefReader s String -> RefCreator s ()
 
     primEntry
         :: String
@@ -349,14 +379,12 @@ instance RefContext m => WidgetContext (WContext m) where
         layout (a, s) (Just a') | a == a' = color green $ text s
         layout (_, s) _ = text s
 
-    label s = addLayout $ pure ((), pure $ color magenta $ text s)
-
-    dynLabel name r = horizontally $ do
-        label name
+    label name r = horizontally $ do
+        addLayout $ pure ((), pure $ color magenta $ text name)
         addControl (pure name) (pure [Get $ r <&> text]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") . text <$> r)
 
     primEntry name active ok r = horizontally $ do
-        label name
+        addLayout $ pure ((), pure $ color magenta $ text name)
         addControl (pure name) (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
             $ color <$> (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
                     <*> (text . pad 7 . (++ " ") <$> readRef r)
@@ -467,7 +495,7 @@ runWidget out buildwidget = do
             void $ onChange acts $ lift . setControlActions
             void $ onChangeEqOld name $ \oldname name -> lift $ modSimpleRef controlnames $ modify
                 $ Map'.insertWith Set.union name (Set.singleton i)
-                . Map'.update (Just . Set.delete i) oldname
+--                . Map'.update (Just . Set.delete i) oldname
             onRegionStatusChange_ $ \msg -> setControlActions <$> f msg
             addLayout $ return $ (,) () $
                 hcomp_ <$> layout <*> (pure $ color yellow $ text $ map toSubscript $ show i)
