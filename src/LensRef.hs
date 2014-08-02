@@ -608,7 +608,9 @@ type OrdRefSet m a = Map.IntMap (SimpleRef m a)
 ------------- data types for computations
 
 -- reference reader monad
-type RefReader = RefCreator
+newtype RefReader m a
+    = RefReader { runRefReader :: RefCreator m a }
+        deriving (Monad, Applicative, Functor, MonadFix)
 
 -- reference creator monad
 newtype RefCreator m a
@@ -648,7 +650,7 @@ newReadReference a0 ma = do
 
         regTrigger (i, oir) ih ma
 
-        return $ getVal oir i
+        return $ RefReader $ getVal oir i
 
 getVal oir i = do
     RefState a' _ <- readSimpleRef oir
@@ -665,7 +667,7 @@ newReference a0 = do
     oir <- newSimpleRef $ RefState a0 mempty
 
     let am :: RefReader m a
-        am = getVal oir i
+        am = RefReader $ getVal oir i
 
     let unsafeWriterToCreator rep init upd = do
 
@@ -777,7 +779,7 @@ regTrigger (i, oir) ih ma = do
             modSimpleRef pr $ modify (>> _updateFun ts)
 
 readRef__ :: RefContext m => Ref m a -> RefCreator m a
-readRef__ r = readRef r
+readRef__ r = readerToCreator $ readRef r
 
 newRef :: RefContext m => a -> RefCreator m (Ref m a)
 newRef a = newReference a
@@ -787,19 +789,19 @@ extendRef m k a0 = do
     r <- newReference a0
     -- TODO: remove getHandler?
     _ <- getHandler $ do
-        register r True $ \a -> readRef m <&> \b -> set k b a
+        register r True $ \a -> readerToCreator $ readRef m <&> \b -> set k b a
         register m False $ \_ -> readRef__ r <&> (^. k)
     return r
 
 onChange :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (RefReader m b)
 onChange m f = do
     r <- newReadReference (const $ pure (), error "impossible #4") $ \(h, _) -> do
-        a <- m
+        a <- readerToCreator m
         noDependency $ do
             h Kill
             getHandler $ f a
     tellHand $ \msg -> do
-        (h, _) <- r
+        (h, _) <- readerToCreator r
         h msg
     return $ r <&> snd
 
@@ -808,7 +810,7 @@ onChange_ :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreato
 onChange_ m f = do
     r <- newReference (const $ pure (), error "impossible #3")
     register r True $ \(h', _) -> do
-        a <- m
+        a <- readerToCreator m
         noDependency $ do
             h' Kill
             (h, b) <- getHandler $ f a
@@ -822,7 +824,7 @@ onChange_ m f = do
 onChangeEq :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (RefReader m b)
 onChangeEq m f = do
     r <- newReadReference (const False, (const $ pure (), error "impossible #3")) $ \it@(p, (h, _)) -> do
-        a <- m
+        a <- readerToCreator m
         noDependency $ if p a
           then return it
           else do
@@ -830,7 +832,7 @@ onChangeEq m f = do
             hb <- getHandler $ f a
             return ((== a), hb)
     tellHand $ \msg -> do
-        (_, (h, _)) <- r
+        (_, (h, _)) <- readerToCreator r
         h msg
 
     return $ r <&> snd . snd
@@ -839,7 +841,7 @@ onChangeEqOld :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator 
 onChangeEqOld m f = do
     x <- readerToCreator m
     r <- newReadReference (x, (const $ pure (), error "impossible #3")) $ \it@(x, (h, _)) -> do
-        a <- m
+        a <- readerToCreator m
         noDependency $ if x == a
           then return it
           else do
@@ -847,7 +849,7 @@ onChangeEqOld m f = do
             hb <- getHandler $ f x a
             return (a, hb)
     tellHand $ \msg -> do
-        (_, (h, _)) <- r
+        (_, (h, _)) <- readerToCreator r
         h msg
 
     return $ r <&> snd . snd
@@ -856,7 +858,7 @@ onChangeEq_ :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m b) ->
 onChangeEq_ m f = do
     r <- newReference (const False, (const $ pure (), error "impossible #3"))
     register r True $ \it@(p, (h', _)) -> do
-        a <- m
+        a <- readerToCreator m
         noDependency $ if p a
           then return it
           else do
@@ -874,7 +876,7 @@ onChangeMemo mr f = do
     r <- newReadReference ((const False, ((error "impossible #2", const $ pure (), const $ pure ()) , error "impossible #1")), [])
       $ \st'@((p, ((m'',h1'',h2''), _)), memo) -> do
         let it = (p, (m'', h1''))
-        a <- mr
+        a <- readerToCreator mr
         noDependency $ if p a
           then return st'
           else do
@@ -892,7 +894,7 @@ onChangeMemo mr f = do
                 return (((== a), ((m',h1,h2), b')), it: memo)
 
     tellHand $ \msg -> do
-        ((_, ((_, h1, h2), _)), _) <- r
+        ((_, ((_, h1, h2), _)), _) <- readerToCreator r
         h1 msg >> h2 msg
 
     return $ r <&> snd . snd . fst
@@ -903,7 +905,7 @@ onRegionStatusChange h
 
 onRegionStatusChange_ :: RefContext m => (RegionStatusChange -> RefReader m (m ())) -> RefCreator m ()
 onRegionStatusChange_ h
-    = tellHand $ join . fmap lift . h
+    = tellHand $ join . fmap lift . readerToCreator . h
 
 
 runRefCreator
@@ -984,16 +986,16 @@ instance (RefContext m, MonadFix m) => MonadFix (RefCreator m) where
     mfix f = RefCreator $ \r -> mfix $ \a -> unRefCreator (f a) r
 
 currentValue :: RefContext m => RefReader m a -> RefReader m a
-currentValue = noDependency
+currentValue = RefReader . noDependency . runRefReader
 
 readRef :: RefContext m => Ref m a -> RefReader m a
 readRef r = runReaderAction $ runRef r Const
 
 readerToCreator :: RefContext m => RefReader m a -> RefCreator m a
-readerToCreator = id
+readerToCreator = runRefReader
 
 readerToWriter :: RefContext m => RefReader m a -> RefWriter m a
-readerToWriter = RefWriter
+readerToWriter = RefWriter . readerToCreator
 
 instance MonadTrans RefWriter where
     lift = RefWriter . lift
@@ -1076,8 +1078,8 @@ instance RefContext m => RefAction (RegisterAction m) where
 
         r <- newReadReference (const $ pure ()) $ \kill -> do
             kill Kill
-            noDependency . fmap fst . getHandler . ($ init) . runRegisterAction =<< m
-        tellHand $ \msg -> r >>= ($ msg)
+            noDependency . fmap fst . getHandler . ($ init) . runRegisterAction =<< readerToCreator m
+        tellHand $ \msg -> readerToCreator r >>= ($ msg)
 
     buildUnitRefAction _ = RegisterAction $ const $ pure ()
 
