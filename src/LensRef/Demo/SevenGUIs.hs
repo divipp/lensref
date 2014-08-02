@@ -167,7 +167,7 @@ crud = do
     --------- view
     vertically $ do
         horizontally $ label "Filter prefix:" >> entry prefix
-        listbox sel $ map (\(i, (s, n)) -> (i, text $ s ++ ", " ++ n)) <$> filterednames
+        listbox sel $ map (\(i, (s, n)) -> (i, s ++ ", " ++ n)) <$> filterednames
         horizontally $ label "Name:"    >> entry (lensMap _2 name)
         horizontally $ label "Surname:" >> entry (lensMap _1 name)
         horizontally $ do
@@ -175,19 +175,6 @@ crud = do
             button "Update" $ fmap <$> (update <$> readRef name) <*> readRef sel
             button "Delete" $ fmap delete <$> readRef sel
 
---------------- part of the toolkit
-
-listbox :: (WidgetContext s, Eq a) => Ref s (Maybe a) -> RefReader s [(a, Doc)] -> RefCreator s ()
-listbox sel as = void $ (null <$> as) `switch` \case
-    True  -> return ()
-    False -> do
-        primButton (name <$> (head <$> as) <*> readRef sel)
-                   (pure True)
-                   (writeRef sel . Just . fst . head =<< readerToWriter as)
-        listbox sel $ drop 1 <$> as    -- TODO: should work with tail instead of drop 1
-  where
-    name (a, s) (Just a') | a == a' = color green s
-    name (_, s) _ = s
 
 -------------------------------------------------------------------------------- 7guis #6
 
@@ -338,6 +325,18 @@ class RefContext s => WidgetContext s where
     combobox :: Eq a => Ref s a -> Writer [(a, String)] () -> RefCreator s ()
     combobox i as = horizontally $ forM_ (execWriter as) $ \(n, s) ->
         primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure (text s)) (pure True) $ writeRef i n
+
+    listbox :: Eq a => Ref s (Maybe a) -> RefReader s [(a, String)] -> RefCreator s ()
+    listbox sel as = void $ (null <$> as) `switch` \case
+        True  -> return ()
+        False -> do
+            primButton (name <$> (head <$> as) <*> readRef sel)
+                       (pure True)
+                       (writeRef sel . Just . fst . head =<< readerToWriter as)
+            listbox sel $ drop 1 <$> as    -- TODO: should work with tail instead of drop 1
+      where
+        name (a, s) (Just a') | a == a' = color green $ text s
+        name (_, s) _ = text s
 
     padding      :: RefCreator s a -> RefCreator s a
     vertically   :: RefCreator s a -> RefCreator s a
