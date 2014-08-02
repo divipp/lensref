@@ -840,14 +840,14 @@ onChangeEq m f = do
 onChangeEqOld :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator m b) -> RefCreator m (RefReader m b)
 onChangeEqOld m f = do
     x <- readerToCreator m
-    r <- newReadReference (x, (const $ pure (), error "impossible #3")) $ \it@(x, (h, _)) -> do
+    r <- newReadReference ((x, const False), (const $ pure (), error "impossible #3")) $ \it@((x, p), (h, _)) -> do
         a <- readerToCreator m
-        noDependency $ if x == a
+        noDependency $ if p a
           then return it
           else do
             h Kill
             hb <- getHandler $ f x a
-            return (a, hb)
+            return ((a, (== a)), hb)
     tellHand $ \msg -> do
         (_, (h, _)) <- readerToCreator r
         h msg
