@@ -15,6 +15,8 @@ import Data.Function (on)
 import Data.List (isPrefixOf, insertBy)
 import Data.Maybe (fromMaybe, listToMaybe, isJust, isNothing)
 import qualified Data.IntMap as Map
+import qualified Data.Map as Map'
+import qualified Data.IntSet as Set
 import Control.Applicative (pure, (<*>), (<$>), liftA2)
 import Control.Monad.State
 import Control.Monad.Reader
@@ -258,8 +260,8 @@ class RefContext s => WidgetContext s where
 
     primEntry
         :: String
-        -> RefReader s Bool
-        -> RefReader s Bool
+        -> RefReader s Bool     -- ^ active (sensitive)
+        -> RefReader s Bool     -- ^ the content is correct
         -> Ref s String
         -> RefCreator s ()
 
@@ -288,38 +290,17 @@ class RefContext s => WidgetContext s where
             ((x,""):_) -> (x, Nothing)
             _ -> (v, Just s)
 
-    primButton
-        :: RefReader s Doc        -- ^ dynamic label of the button
-        -> RefReader s Bool       -- ^ the button is active when this returns @True@
-        -> RefWriter s ()         -- ^ the action to do when the button is pressed
-        -> RefCreator s ()
-
     -- | Button.
     button
         :: RefReader s String     -- ^ dynamic label of the button
         -> RefReader s (Maybe (RefWriter s ()))     -- ^ when the @Maybe@ readRef is @Nothing@, the button is inactive
         -> RefCreator s ()
-    button s fm
-        = primButton (text <$> s) (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
 
     checkbox :: Ref s Bool -> RefCreator s ()
-    checkbox r = primButton (text . show <$> readRef r) (pure True) $ modRef r not
 
     combobox :: Eq a => Ref s a -> Writer [(a, String)] () -> RefCreator s ()
-    combobox i as = horizontally $ forM_ (execWriter as) $ \(n, s) ->
-        primButton ((bool (color green) id . (== n) <$> readRef i) <*> pure (text s)) (pure True) $ writeRef i n
 
     listbox :: Eq a => Ref s (Maybe a) -> RefReader s [(a, String)] -> RefCreator s ()
-    listbox sel as = void $ (null <$> as) `switch` \case
-        True  -> return ()
-        False -> do
-            primButton (name <$> (head <$> as) <*> readRef sel)
-                       (pure True)
-                       (writeRef sel . Just . fst . head =<< readerToWriter as)
-            listbox sel $ drop 1 <$> as    -- TODO: should work with tail instead of drop 1
-      where
-        name (a, s) (Just a') | a == a' = color green $ text s
-        name (_, s) _ = text s
 
     padding      :: RefCreator s a -> RefCreator s a
     vertically   :: RefCreator s a -> RefCreator s a
@@ -348,19 +329,35 @@ item s m = tell [(s, m)]
 
 instance RefContext m => WidgetContext (WContext m) where
 
+    button s fm
+        = primButton s (text <$> s) (isJust <$> fm) $ readerToWriter fm >>= fromMaybe (pure ())
+
+    checkbox r = primButton (show <$> readRef r) (text . show <$> readRef r) (pure True) $ modRef r not
+
+    combobox i as = horizontally $ forM_ (execWriter as) $ \(n, s) ->
+        primButton (pure s) ((bool (color green) id . (== n) <$> readRef i) <*> pure (text s)) (pure True) $ writeRef i n
+
+    listbox sel as = void $ (null <$> as) `switch` \case
+        True  -> return ()
+        False -> do
+            primButton (fromMaybe "" . fmap snd . listToMaybe <$> as)    -- TODO: should work with head instead of listToMaybe
+                       (layout <$> (head <$> as) <*> readRef sel)
+                       (pure True)
+                       (writeRef sel . Just . fst . head =<< readerToWriter as)
+            listbox sel $ drop 1 <$> as    -- TODO: should work with tail instead of drop 1
+      where
+        layout (a, s) (Just a') | a == a' = color green $ text s
+        layout (_, s) _ = text s
+
     label s = addLayout $ pure ((), pure $ color magenta $ text s)
 
     dynLabel name r = horizontally $ do
         label name
-        addControl (pure [Get $ r <&> text]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") . text <$> r)
-
-    primButton name vis act
-        = addControl (vis <&> \case True -> [Click act, Get name]; False -> [])
-            $ color <$> (bool grey magenta <$> vis) <*> name
+        addControl (pure name) (pure [Get $ r <&> text]) $ color bluebackground <$> ((" " `hcomp_`) . (`hcomp_` " ") . text <$> r)
 
     primEntry name active ok r = horizontally $ do
         label name
-        addControl (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
+        addControl (pure name) (active <&> \case True -> [Put $ writeRef r, Get $ text <$> readRef r]; False -> [])
             $ color <$> (active >>= bool (bool greenbackground redbackground <$> ok) (pure magenta))
                     <*> (text . pad 7 . (++ " ") <$> readRef r)
       where
@@ -405,14 +402,14 @@ data WidgetContextDict m = WidgetContextDict
     , time             :: SimpleRef m Time
     }
 
-type RegisterControl s = RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
+type RegisterControl s = RefReader s String -> RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
 
 --------------------------------------------------------------------------------
 
-addControl :: (RefContext m, s ~ WContext m) => RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
-addControl acts name = do
+addControl :: (RefContext m, s ~ WContext m) => RefReader s String -> RefReader s [Action s] -> RefReader s Doc -> RefCreator s ()
+addControl name acts layout = do
     f <- lift $ asks addControlDict
-    f acts name
+    f name acts layout
 
 addLayout :: (RefContext m, s ~ WContext m) => RefCreator s (a, RefReader s Doc) -> RefCreator s a
 addLayout f = do
@@ -427,11 +424,22 @@ collectLayouts = do
     c <- lift $ asks widgetCollection
     lift $ modSimpleRef c $ state $ \s -> (reverse <$> s, pure [])
 
+primButton
+    :: (RefContext m, s ~ WContext m)
+    => RefReader s String     -- ^ dynamic label of the button
+    -> RefReader s Doc        -- ^ dynamic label of the button
+    -> RefReader s Bool       -- ^ the button is active when this returns @True@
+    -> RefWriter s ()         -- ^ the action to do when the button is pressed
+    -> RefCreator s ()
+primButton name layout vis act
+    = addControl name (vis <&> \case True -> [Click act, Get layout]; False -> [])
+        $ color <$> (bool grey magenta <$> vis) <*> layout
+
 --------------------------------
 
 run, run'
     :: RefCreator (WContext IO) ()
-    -> IO (Int -> IO (), Int -> String -> IO (), Int -> IO (), Delay -> IO ())
+    -> IO (String -> IO (), String -> String -> IO (), String -> IO (), Delay -> IO ())
 run  = runWidget putStr . padding
 run' = runWidget (appendFile "out") . padding
 
@@ -439,16 +447,17 @@ runWidget
     :: forall m . RefContext m
     => (String -> m ())
     -> RefCreator (WContext m) ()
-    -> m (Int -> m (), Int -> String -> m (), Int -> m (), Delay -> m ())
+    -> m (String -> m (), String -> String -> m (), String -> m (), Delay -> m ())
 runWidget out buildwidget = do
     delayedactions <- newSimpleRef mempty
     time           <- newSimpleRef 0
     controlmap     <- newSimpleRef mempty
+    controlnames   <- newSimpleRef mempty
     controlcounter <- newSimpleRef 0
     currentview    <- newSimpleRef emptyDoc
     collection     <- newSimpleRef $ pure []
 
-    let addControl acts name = do
+    let addControl name acts layout = do
             i <- lift $ modSimpleRef controlcounter $ state $ \c -> (c, succ c)
             let setControlActions cs = modSimpleRef controlmap $ modify $ case cs of
                     [] -> Map.delete i
@@ -456,9 +465,12 @@ runWidget out buildwidget = do
                 f Unblock = acts
                 f _ = pure []
             void $ onChange acts $ lift . setControlActions
+            void $ onChangeEqOld name $ \oldname name -> lift $ modSimpleRef controlnames $ modify
+                $ Map'.insertWith Set.union name (Set.singleton i)
+                . Map'.update (Just . Set.delete i) oldname
             onRegionStatusChange_ $ \msg -> setControlActions <$> f msg
             addLayout $ return $ (,) () $
-                hcomp_ <$> name <*> (pure $ color yellow $ text $ map toSubscript $ show i)
+                hcomp_ <$> layout <*> (pure $ color yellow $ text $ map toSubscript $ show i)
 
         asyncDoAt t w = lift $ do
             ct <- readSimpleRef time
@@ -479,8 +491,15 @@ runWidget out buildwidget = do
                 timeJump t
               _ -> lift $ writeSimpleRef time t
 
-        lookup_ :: Int -> m [Action (WContext m)]
-        lookup_ i = readSimpleRef controlmap >>= maybe (fail "control not registered") pure . Map.lookup i
+        lookup_ :: String -> m [Action (WContext m)]
+        lookup_ n = do
+            ns <- readSimpleRef controlnames
+            i <- case (Map'.lookup n ns, reads n) of
+                (Just is, _) | not $ Set.null is -> return $ head $ Set.toList is
+                (_, [(i, "")]) -> return i
+                _ -> fail "no such control"
+            cs <- readSimpleRef controlmap
+            maybe (fail "control not registered") pure $ Map.lookup i cs
 
         draw = modSimpleRef currentview (state $ \d -> (show d, emptyDoc)) >>= out
 
