@@ -340,14 +340,6 @@ class RefContext s => WidgetContext s where
 
     currentTime  :: s Time
 
-    notebook :: NamedWidgets s () -> RefCreator s ()
-    notebook m = do
-        ws <- execWriterT m
-        i <- newRef (0 :: Int)
-        vertically $ do
-            combobox i $ forM_ (zip [0..] ws) $ \(n, (s, _)) -> item n s
-            padding $ void $ readRef i `switch` snd . (ws !!)
-
 item :: MonadWriter [(a, b)] m => a -> b -> m ()
 item s m = tell [(s, m)]
 
