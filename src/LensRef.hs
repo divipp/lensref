@@ -36,6 +36,7 @@ module LensRef
     , onChange_
     , onChangeEq
     , onChangeEq_
+    , onChangeEqOld
     , onChangeMemo
 
     -- * Other
@@ -828,6 +829,23 @@ onChangeEq m f = do
             h Kill
             hb <- getHandler $ f a
             return ((== a), hb)
+    tellHand $ \msg -> do
+        (_, (h, _)) <- r
+        h msg
+
+    return $ r <&> snd . snd
+
+onChangeEqOld :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator m b) -> RefCreator m (RefReader m b)
+onChangeEqOld m f = do
+    x <- readerToCreator m
+    r <- newReadReference (x, (const $ pure (), error "impossible #3")) $ \it@(x, (h, _)) -> do
+        a <- m
+        noDependency $ if x == a
+          then return it
+          else do
+            h Kill
+            hb <- getHandler $ f x a
+            return (a, hb)
     tellHand $ \msg -> do
         (_, (h, _)) <- r
         h msg
