@@ -177,7 +177,7 @@ mkTimer refresh end = do
 
 crud :: WidgetContext s => RefCreator s ()
 crud = do
-    --------- model
+    -- model
     names   <- newRef [("Emil", "Hans"), ("Mustermann", "Max"), ("Tisch", "Roman")]
     name    <- newRef ("Romba", "John")
     prefix  <- newRef ""
@@ -193,7 +193,7 @@ crud = do
         filterednames
             =   (readRef prefix <&> \p -> filter (isPrefixOf p . fst . snd))
             <*> (zip [0..] <$> readRef names)
-    --------- view
+    -- view
     vertically $ do
         entry "Filter prefix" prefix
         listbox sel $ map (\(i, (s, n)) -> (i, s ++ ", " ++ n)) <$> filterednames
@@ -209,7 +209,7 @@ crud = do
 
 circleDrawer :: forall s . WidgetContext s => RefCreator s ()
 circleDrawer = do
-    -------- model
+    -- model
     mousepos <- newRef (0, 0 :: Prec2 Double)
     circles  <- newRef [((0,2), 1), ((0,0), 2)]
     selected <- onChange_ (readRef circles) $ const $ return Nothing
@@ -226,7 +226,7 @@ circleDrawer = do
         view = maybe id f <$> readRef selected <*> (map ((,) False) <$> readRef circles)  where
             f (i, d) l = insertBy (compare `on` snd . snd) (True, (fst $ snd $ l !! i, d)) $ take i l ++ drop (i+1) l
         commit = readerToWriter view >>= writeRef circles . map snd
-    -------- view
+    -- view
     horizontally $ do
         button "Undo" undo
         button "Redo" redo
@@ -495,7 +495,7 @@ runWidget out buildwidget = do
             void $ onChange acts $ lift . setControlActions
             void $ onChangeEqOld name $ \oldname name -> lift $ modSimpleRef controlnames $ modify
                 $ Map'.insertWith Set.union name (Set.singleton i)
---                . Map'.update (Just . Set.delete i) oldname
+                . Map'.update (Just . Set.delete i) oldname
             onRegionStatusChange_ $ \msg -> setControlActions <$> f msg
             addLayout $ return $ (,) () $
                 hcomp_ <$> layout <*> (pure $ color yellow $ text $ map toSubscript $ show i)
