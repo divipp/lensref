@@ -87,7 +87,7 @@ benchmark lensref-performance-test
                     base < 5
                   , mtl < 2.3
                   , lens-family
-                  , criterion
+                  , criterion == 1.0.*
                   , lensref
 
   ghc-options:

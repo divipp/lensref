@@ -1,26 +1,24 @@
---{-# LANGUAGE RankNTypes #-}
-
 import Data.IORef
 import Control.Monad
 import Criterion.Main
-import Criterion.Config
+import Criterion.Types
 
 import LensRef.Context
 import LensRef
 
 --------------------------------------------------------------------------------
 
+myConfig :: Config
 myConfig = defaultConfig
-              -- Always GC between runs.
-            { cfgPerformGC = ljust True
-            , cfgReport    = ljust "lensref-performance-report.html"
+            { reportFile    = Just "lensref-performance-report.html"
             }
 
-main = defaultMainWith myConfig (return ())
-     $  [ bench ("ioref create" ++ show i) $ ioRefTest i | i <- range]
+main :: IO ()
+main = defaultMainWith myConfig
+     $  [ bench ("ioref create" ++ show i) $ nfIO $ ioRefTest i | i <- range]
      ++
         [ bgroup (imp ++ " " ++ name)
-            [ bench (show i) $ f name i
+            [ bench (show i) $ nfIO $ f name i
             | n <- range
             , let i = round $ fromIntegral n * corr * corr2
             ]
@@ -33,6 +31,7 @@ main = defaultMainWith myConfig (return ())
 --------------------------------------------------------------------------------
 
 -- for comparison
+ioRefTest :: Int -> IO ()
 ioRefTest n = do
     rs <- replicateM n $ newIORef 'x'
     forM_ rs $ \r -> r ==> 'x'
