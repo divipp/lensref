@@ -47,7 +47,6 @@ library
   exposed-modules:
                     LensRef.Context
                     LensRef
-                    LensRef.EqRef
 
                     LensRef.Demo.Simple
                     LensRef.Demo.SevenGUIs
