@@ -42,7 +42,6 @@ library
   build-depends:
                     base < 5
                   , mtl < 2.3
-                  , monad-control < 0.4
                   , containers < 0.6
                   , lens-family
   exposed-modules:
