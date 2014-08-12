@@ -1,9 +1,9 @@
 import Data.IORef
+import Control.Applicative
 import Control.Monad
 import Criterion.Main
 import Criterion.Types
 
-import LensRef.Context
 import LensRef
 
 --------------------------------------------------------------------------------
@@ -72,9 +72,10 @@ runPerformanceTests name n = do
             rb <- newRef True
             r1 <- newRef 'x'
             r2 <- newRef 'y'
-            let f (r1, r2) = (r1', r2') where
-                    r1' = joinRef $ readRef rb <&> \b -> if b then r1 else r2
-                    r2' = joinRef $ readRef rb <&> \b -> if b then r2 else r1
+            let f (r1, r2) =
+                    ( joinRef $ bool r1 r2 <$> readRef rb
+                    , joinRef $ bool r2 r1 <$> readRef rb
+                    )
                 (r1', r2') = iterate f (r1, r2) !! (2*n)
             return $ do
                 r1' ==> 'x'
@@ -97,4 +98,8 @@ runPerformanceTests name n = do
 
         _ -> error $ "No such test: " ++ name
 
+
+bool :: a -> a -> Bool -> a
+bool a _ True  = a
+bool _ b False = b
 

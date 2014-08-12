@@ -25,7 +25,6 @@ import Lens.Family2
 import Lens.Family2.Stock
 import Lens.Family2.Unchecked
 
-import LensRef.Context
 import LensRef
 
 -------------------------------------------------------------------------------- 7guis #1
@@ -615,7 +614,13 @@ bluebackground  = 44
 -------------------------------------------------------------------------------- Aux
 --------------------------------------------------------------------------------
 
-bool a _ True = a
+infixl 1 <&>
+
+(<&>) :: Functor f => f a -> (a -> b) -> f b
+as <&> f = f <$> as
+
+bool :: a -> a -> Bool -> a
+bool a _ True  = a
 bool _ b False = b
 
 ---------------------

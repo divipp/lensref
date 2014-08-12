@@ -12,7 +12,6 @@ import Lens.Family2
 import Lens.Family2.Stock
 import Lens.Family2.Unchecked
 
-import LensRef.Context
 import LensRef
 
 main :: IO ()
@@ -48,7 +47,7 @@ runTests :: IO ()
 runTests = do
 
     let runTest :: String -> (forall s . RefCreator (Prog s) (RefWriter (Prog s) ())) -> IO ()
-        runTest name t = runProg name $ join $ runRefCreator $ \runRefWriter -> t <&> runRefWriter
+        runTest name t = runProg name $ join $ runRefCreator $ \runRW -> runRW <$> t
 
         a ==? b = when (a /= b) $ message $ show a ++ " /= " ++ show b
 
@@ -370,8 +369,8 @@ runTests = do
         r1 <- newRef 'x'
         r2 <- newRef 'y'
         let f (r1, r2) = (r1', r2') where
-                r1' = joinRef $ readRef rb <&> \b -> if b then r1 else r2
-                r2' = joinRef $ readRef rb <&> \b -> if b then r2 else r1
+                r1' = joinRef $ bool r1 r2 <$> readRef rb
+                r2' = joinRef $ bool r2 r1 <$> readRef rb
             (r1', r2') = iterate f (r1, r2) !! 10
         return $ do
             r1' ==> 'x'
@@ -878,6 +877,10 @@ runTests = do
 
 
 -------------------------- auxiliary definitions
+
+bool :: a -> a -> Bool -> a
+bool a _ True  = a
+bool _ b False = b
 
 maybeLens :: Lens' (Bool, a) (Maybe a)
 maybeLens = lens (\(b,a) -> if b then Just a else Nothing)
