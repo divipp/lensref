@@ -25,6 +25,7 @@ cabal-version:      >= 1.9.2
 build-type:         Simple
 extra-source-files: changelog
                     docs/Introduction.pandoc
+                    docs/DotPlugin.hs
                     docs/Makefile
 
 source-repository head
@@ -37,25 +38,20 @@ Flag pure
 
 library
 
-  hs-source-dirs:
-                    src
-  build-depends:
-                    base < 5
+  hs-source-dirs:   src
+
+  build-depends:    base < 5
                   , mtl < 2.3
                   , containers < 0.6
                   , lens-family
-  exposed-modules:
-                    LensRef
 
+  exposed-modules:  LensRef
                     LensRef.Demo.Simple
                     LensRef.Demo.SevenGUIs
-
   if flag(pure)
-    cpp-options:
-                    -D__PURE__
+    cpp-options:    -D__PURE__
 
-  ghc-options:
-                    -Wall
+  ghc-options:      -Wall
                     -fwarn-incomplete-record-updates
                     -fno-warn-name-shadowing
                     -fno-warn-missing-signatures
@@ -65,13 +61,13 @@ test-suite runtests
 
   type:             exitcode-stdio-1.0
   main-is:          runtests.hs
-  build-depends:
-                    base < 5
+
+  build-depends:    base < 5
                   , mtl < 2.3
                   , lens-family
                   , lensref
-  ghc-options:
-                    -Wall
+
+  ghc-options:      -Wall
                     -fwarn-incomplete-record-updates
                     -fno-warn-name-shadowing
                     -fno-warn-missing-signatures
@@ -81,15 +77,14 @@ benchmark lensref-performance-test
 
   type:             exitcode-stdio-1.0
   main-is:          runperftest.hs
-  build-depends:
-                    base < 5
+
+  build-depends:    base < 5
                   , mtl < 2.3
                   , lens-family
                   , criterion == 1.0.*
                   , lensref
 
-  ghc-options:
-                    -Wall
+  ghc-options:      -Wall
                     -fwarn-incomplete-record-updates
                     -fno-warn-name-shadowing
                     -fno-warn-missing-signatures
