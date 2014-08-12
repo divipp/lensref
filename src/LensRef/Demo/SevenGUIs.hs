@@ -5,6 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module LensRef.Demo.SevenGUIs where
@@ -68,9 +69,9 @@ counterModel = do
         }
 
 counterView :: WidgetContext s => Counter s -> RefCreator s ()
-counterView c = horizontally $ do
-    label  "Value" $ show <$> counterValue c
-    button "Count" $ pure $ Just $ incrementCounter c
+counterView (Counter {..}) = horizontally $ do
+    label  "Value" $ show <$> counterValue
+    button "Count" $ pure $ Just incrementCounter
 
 -------------------------------------------------------------------------------- 7guis #2
 
@@ -148,9 +149,9 @@ timer refresh = do
     start <- newRef =<< lift currentTime
     timer <- join <$> onChange (readRef start + readRef duration) (mkTimer refresh)
     let elapsed = timer - readRef start
-        ratio = per <$> elapsed <*> readRef duration where
-            per _ 0 = 1
-            per a b = a / b
+        ratio = safeDiv <$> elapsed <*> readRef duration where
+            safeDiv _ 0 = 1
+            safeDiv a b = a / b
         reset = writeRef start =<< lift currentTime
     -- view
     vertically $ do
@@ -224,7 +225,7 @@ circleDrawer = do
                    [ modRef circles $ insertBy (compare `on` snd) (mp, 1) ]
         view = maybe id f <$> readRef selected <*> (map ((,) False) <$> readRef circles)  where
             f (i, d) l = insertBy (compare `on` snd . snd) (True, (fst $ snd $ l !! i, d)) $ take i l ++ drop (i+1) l
-        commit = readerToWriter view >>= writeRef circles . map snd
+        done = readerToWriter view >>= writeRef circles . map snd
     -- view
     horizontally $ do
         button "Undo" undo
@@ -239,7 +240,7 @@ circleDrawer = do
         label "Adjust diameter of circle at" $ show . fst <$> ((!!) <$> readRef circles <*> readRef (lensMap (_2 . _1) sel))
         horizontally $ do
             void $ entryShow "Diameter" $ lensMap (_2 . _2 . nonNegative) sel
-            button "Done" $ pure $ Just commit
+            button "Done" $ pure $ Just done
 
 distance (x1, y1) (x2, y2)
     = sqrt $ (x2-x1)^2 + (y2-y1)^2
