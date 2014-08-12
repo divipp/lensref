@@ -271,6 +271,7 @@ onChange :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreator
 onChange r f = fmap readRef $ onChange_ r f
 
 onChange_ :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
+--onChange_ m f = onChangeOldBy_ (\_ _ -> False) m $ \_ -> f
 onChange_ m f = do
     r <- newRef (mempty, error "impossible #4")
     register r True $ \(h, _) -> do
@@ -291,7 +292,10 @@ onChangeEqOld :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator 
 onChangeEqOld m f = fmap readRef $ onChangeEqOld_ m f
 
 onChangeEqOld_ :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator m b) -> RefCreator m (Ref m b)
-onChangeEqOld_ m f = do
+onChangeEqOld_ m f = onChangeOldBy_ (==) m f
+
+onChangeOldBy_ :: RefContext m => (a -> a -> Bool) -> RefReader m a -> (a -> a -> RefCreator m b) -> RefCreator m (Ref m b)
+onChangeOldBy_ eq m f = do
     x <- readerToCreator m
     r <- newRef ((x, const False), (mempty, error "impossible #3"))
     register r True $ \it@((x, p), (h, _)) -> do
@@ -301,7 +305,7 @@ onChangeEqOld_ m f = do
           else do
             runHandler $ h Kill
             hb <- getHandler $ f x a
-            return ((a, (== a)), hb)
+            return ((a, eq a), hb)
     RefCreator $ tell $ \msg -> do
         (_, (h, _)) <- runRefWriterT $ readerToWriter $ readRef r
         h msg
