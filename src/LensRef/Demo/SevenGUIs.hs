@@ -623,6 +623,13 @@ bool :: a -> a -> Bool -> a
 bool a _ True  = a
 bool _ b False = b
 
+modSimpleRef :: RefContext m => SimpleRef m a -> StateT a m b -> m b
+modSimpleRef r s = do
+    a <- readSimpleRef r
+    (x, a') <- runStateT s a
+    writeSimpleRef r a'
+    return x
+
 ---------------------
 
 newtype Prec2 a = Prec2 { unPrec2 :: a }

@@ -47,7 +47,6 @@ module LensRef
 
     -- * Reference context
     , RefContext (..)
-    , modSimpleRef
 
     -- * Aux
     , engine
