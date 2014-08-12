@@ -74,8 +74,6 @@ import Unsafe.Coerce
 
 import qualified Data.IntSet as Set
 import qualified Data.IntMap as Map
-import Control.Monad.Reader
-import Control.Monad.Writer
 
 engine :: String
 engine = "pure"
@@ -287,19 +285,27 @@ onChangeEq :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m b) -> 
 onChangeEq r f = fmap readRef $ onChangeEq_ r f
 
 onChangeEq_ :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
-onChangeEq_ m f = do
-    r <- newRef (const False, (mempty, error "impossible #3"))
-    register r True $ \it@(p, (h, _)) -> do
+onChangeEq_ m f = onChangeEqOld_ m $ \_ -> f
+
+onChangeEqOld :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator m b) -> RefCreator m (RefReader m b)
+onChangeEqOld m f = fmap readRef $ onChangeEqOld_ m f
+
+onChangeEqOld_ :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator m b) -> RefCreator m (Ref m b)
+onChangeEqOld_ m f = do
+    x <- readerToCreator m
+    r <- newRef ((x, const False), (mempty, error "impossible #3"))
+    register r True $ \it@((x, p), (h, _)) -> do
         a <- currentValue' m
         if p a
           then return it
           else do
             runHandler $ h Kill
-            hb <- getHandler $ f a
-            return ((== a), hb)
+            hb <- getHandler $ f x a
+            return ((a, (== a)), hb)
     RefCreator $ tell $ \msg -> do
         (_, (h, _)) <- runRefWriterT $ readerToWriter $ readRef r
         h msg
+
     return $ lensMap (_2 . _2) r
 
 onChangeMemo :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m (RefCreator m b)) -> RefCreator m (RefReader m b)
