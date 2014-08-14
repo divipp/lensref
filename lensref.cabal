@@ -60,7 +60,7 @@ library
 test-suite runtests
 
   type:             exitcode-stdio-1.0
-  main-is:          runtests.hs
+  main-is:          src/runtests.hs
 
   build-depends:    base < 5
                   , mtl < 2.3
@@ -76,7 +76,7 @@ test-suite runtests
 benchmark lensref-performance-test
 
   type:             exitcode-stdio-1.0
-  main-is:          runperftest.hs
+  main-is:          src/runperftest.hs
 
   build-depends:    base < 5
                   , mtl < 2.3
