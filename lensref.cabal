@@ -32,10 +32,6 @@ source-repository head
   type:             git
   location:         https://github.com/divipp/lensref.git
 
-Flag pure
-  Description:      Use the pure but slow implementation of lens references
-  Default:          False
-
 library
 
   hs-source-dirs:   src
@@ -48,8 +44,6 @@ library
   exposed-modules:  LensRef
                     LensRef.Demo.Simple
                     LensRef.Demo.SevenGUIs
-  if flag(pure)
-    cpp-options:    -D__PURE__
 
   ghc-options:      -Wall
                     -fwarn-incomplete-record-updates
