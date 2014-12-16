@@ -15,9 +15,8 @@ myConfig = defaultConfig
 
 main :: IO ()
 main = defaultMainWith myConfig
-     $  [ bench ("ioref create" ++ show i) $ nfIO $ ioRefTest i | i <- range]
-     ++
-        [ bgroup (imp ++ " " ++ name)
+     $  bgroup "ioref create" [ bench (show i) $ nfIO $ ioRefTest i | i <- range]
+     :  [ bgroup (imp ++ " " ++ name)
             [ bench (show i) $ nfIO $ f name i
             | n <- range
             , let i = round $ fromIntegral n * corr * corr2

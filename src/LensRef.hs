@@ -2,21 +2,24 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {- |
 lensref core API
 -}
 module LensRef
     ( -- * Monads
-      RefReader            -- RefReader
-    , RefCreator           -- RefCreator
-    , RefWriter            -- RefWriter
+      RefReader
+    , RefCreator
+    , RefWriter
     , readerToWriter
     , readerToCreator
-    , runRefCreator        -- runRefCreator
+    , runRefCreator
 
     -- * References
     , Ref
@@ -36,7 +39,7 @@ module LensRef
     , onChangeEq
     , onChangeEq_
     , onChangeEqOld
---    , onChangeEqOld'
+    , onChangeEqOld'
     , onChangeMemo
 
     -- * Other
@@ -49,6 +52,7 @@ module LensRef
     , RefContext (..)
     ) where
 
+import Data.Function
 import Data.Maybe
 import Data.String
 import Data.IORef
@@ -58,13 +62,14 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer
-import Control.Monad.State.Strict
-import Control.Monad.ST
+import Control.Monad.ST (ST)
 import Lens.Family2
-import Lens.Family2.Stock
-import Lens.Family2.State.Strict
+import Lens.Family2.Stock (_2)
+import Debug.Trace
 
-import Unsafe.Coerce
+import qualified Unsafe.Coerce
+
+infixr 8 `lensMap`
 
 ----------------------------------- data types
 
@@ -72,27 +77,35 @@ import Unsafe.Coerce
 data RefState m where
     RefState
         :: a        -- reference value
+        -> Int      -- in which write cycle was the value read or written last time
         -> TIds m   -- registered triggers (run them if the value changes)
         -> RefState m
 
 -- | trigger temporal state
 data TriggerState m = TriggerState
-    { _alive        :: Bool
+    { _alive        :: Bool       -- ^ the trigger is not in the inactive part of the network
     , _targetid     :: (Id m)     -- ^ target reference id
     , _dependencies :: (Ids m)    -- ^ source reference ids
     , _updateFun    :: (RefCreator m ())     -- ^ what to run if at least one of the source ids changes
     , _reverseDeps  :: (TIds m)   -- ^ reverse dependencies (temporarily needed during topological sorting)
     }
+{-
+    , _scheduleInfo :: ScheduleInfo m   -- ^ temporarily needed during topological sorting
+    }
 
-
------------------------
-
+-- if 
+data ScheduleInfo m = ScheduleInfo
+    { _reverseDeps  :: TIds m   -- ^ reverse dependencies
+    , _children     :: TIds m   -- ^ dependencies
+    }
+-}
 -- | global variables
 data GlobalVars m = GlobalVars
     { _handlercollection  :: !(SimpleRef m (Handler m))  -- ^ collected handlers
     , _dependencycoll     :: !(SimpleRef m (Ids m))      -- ^ collected dependencies
     , _postpone           :: !(SimpleRef m (RefCreator m ()))       -- ^ postponed actions
     , _counter            :: !(SimpleRef m Int)          -- ^ increasing counter
+    , _writeCounter       :: !(SimpleRef m Int)
     }
 
 -- | reference identifier
@@ -106,196 +119,161 @@ type TId  m = OrdRef m (TriggerState m)
 type TIds m = OrdRefSet m (TriggerState m)
 
 -- | IORef with Ord instance
-type OrdRef    m a = (Int, SimpleRef m a)
+data OrdRef m a = OrdRef
+    { _ordRefId  :: !Int
+    , _ordRefRef :: SimpleRef m a
+    }
 -- | IORefs with Ord instance
 type OrdRefSet m a = Map.IntMap (SimpleRef m a)
 
-------------- data types for computations
-
--- reference reader monad
+-- | reference reader monad
 newtype RefReader m a
-    = RefReader { runRefReader :: RefCreator m a }
+    = RefReader { readerToCreator :: RefCreator m a }
         deriving (Monad, Applicative, Functor, MonadFix)
 
--- reference creator monad
+-- | reference creator monad
 newtype RefCreator m a
     = RefCreator { unRefCreator :: GlobalVars m -> m a }
 
--- reference writer monad
+-- | reference writer monad
 newtype RefWriter m a
-    = RefWriter { runRefWriterT :: RefCreator m a }
+    = RefWriter { unsafeWriterToCreator :: RefCreator m a }
         deriving (Monad, Applicative, Functor, MonadFix)
 
 -- trigger handlers
 -- The registered triggers may be killed, blocked and unblocked via the handler.
 type Handler m = RegionStatusChange -> RefCreator m ()
 
-type HandT = RefCreator
-
-------------------------------
-
-instance RefContext m => RefContext (RefCreator m) where
-    type SimpleRef (RefCreator m) = SimpleRef m
-    newSimpleRef = lift . newSimpleRef
-    readSimpleRef = lift . readSimpleRef
-    writeSimpleRef r = lift . writeSimpleRef r
+-- | TODO
+data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
 
 ------------------------------
 
 newReadReference :: forall m a . RefContext m => a -> (a -> RefCreator m a) -> RefCreator m (RefReader m a)
 newReadReference a0 ma = do
-
     (ih, a1) <- getDependency $ ma a0
-
     if Map.null ih
       then return $ pure a1
       else do
-        i <- newId
-        oir <- newSimpleRef $ RefState a1 mempty
+        i <- newId' a1
+        regTrigger i ih ma
+        return $ getVal i
 
-        regTrigger (i, oir) ih ma
+newRef :: forall m a . RefContext m => a -> RefCreator m (Ref m a)
+newRef a0 = snd <$> newRef_ a0
 
-        return $ RefReader $ getVal oir i
-
-getVal oir i = do
-    RefState a' _ <- readSimpleRef oir
-    r <- RefCreator $ return . _dependencycoll
-    dp <- readSimpleRef r
-    writeSimpleRef r $ Map.insert i oir dp
-    return $ unsafeCoerce a'
-
-
-newReference :: forall m a . RefContext m => a -> RefCreator m (Ref m a)
-newReference a0 = do
-
-    i <- newId
-    oir <- newSimpleRef $ RefState a0 mempty
+newRef_ :: forall m a . RefContext m => a -> RefCreator m (OrdRef m (RefState m), Ref m a)
+newRef_ a0 = do
+    p@(OrdRef _ oir) <- newId' a0
 
     let am :: RefReader m a
-        am = RefReader $ getVal oir i
+        am = getVal p
 
-    let unsafeWriterToCreator rep init upd = do
+        ff rep upd init = do
 
-            RefState aold_ nas <- readSimpleRef oir
-            let aold = unsafeCoerce aold_ :: a
+            ih <- case init of
+              Just ih -> return ih
+              Nothing -> do
 
-            let ma = upd
+                rs@(RefState _ _ nas) <- RefCreator $ \st -> do
+                    wr <- readSimpleRef (_writeCounter st)
+                    modSimpleRef'' oir (setWr wr)               -- (setWr wr) is not needed, id is enough
 
-            (ih, a) <- getDependency $ ma aold
+                (ih, a) <- getDependency $ upd (unsafeGetVal rs :: a)
 
-            when init $ do
-
-                writeSimpleRef oir $ RefState a nas
+                RefCreator $ \st -> do
+                    wr <- modSimpleRef'' (_writeCounter st) succ
+                    writeSimpleRef oir $ RefState a wr nas
 
                 when (not $ Map.null nas) $ do
 
                     let ch :: TId m -> RefCreator m [TId m]
-                        ch (_, n) = do
-                            TriggerState _ (_, w) dep _ _ <- readSimpleRef n
-                            RefState _ revDep <- readSimpleRef w
-                            ls <- flip filterM (Map.toList revDep) $ \(_, na) -> do
-                                TriggerState _alive (i, _) _ _ _ <- readSimpleRef na
-                                pure $ {-alive &&-} not (Map.member i dep)
-                            return ls
+                        ch (OrdRef _ n) = do
+                            TriggerState { _targetid = OrdRef _ w, _dependencies } <- readSimpleRef n
+                            RefState _ _ revDep <- readSimpleRef w
+                            flip filterM (uncurry OrdRef <$> Map.toList revDep) $ \(OrdRef _ na) -> do
+                                TriggerState { _alive, _targetid = OrdRef i _ } <- readSimpleRef na
+                                pure $ {-alive &&-} Map.notMember i _dependencies
 
-                        collects p = mapM_ (collect p) =<< ch p
+                        collects p@(OrdRef i op) = mapM_ collect =<< ch p
+                          where
+                            collect v@(OrdRef _ ov) = do
+                                ts <- modSimpleRef' ov $ \ts -> ts { _reverseDeps = Map.insert i op $ _reverseDeps ts }
+                                when (Map.null $ _reverseDeps ts) $ collects v
 
-                        collect (i, op) v@(_, ov) = do
-                            ts <- readSimpleRef ov
-                            writeSimpleRef ov $ ts { _reverseDeps = Map.insert i op $ _reverseDeps ts }
-                            when (Map.null $ _reverseDeps ts) $ collects v
-
-                    let as = Map.toList nas
---                    as <- (`filterM` Map.toList nas) $ \(_, na) -> readSimpleRef na <&> _alive
+                    let as = uncurry OrdRef <$> Map.toList nas
+--                    as <- (`filterM` Map.toList nas) $ \(_, na) -> _alive <$> readSimpleRef na
                     mapM_ collects as
 
                     let topSort [] = return $ pure ()
-                        topSort (p@(i, op):ps) = do
-                            act <- readSimpleRef op <&> _updateFun
-
-                            let del (_, n) = do
-                                    ts <- readSimpleRef n
-                                    let rd = Map.delete i $ _reverseDeps ts
-                                    writeSimpleRef n $ ts { _reverseDeps = rd }
-                                    return $ Map.null rd
-                            ys <- filterM del =<< ch p
-                            acts <- topSort $ mergeBy (\(i, _) (j, _) -> compare i j) ps ys
+                        topSort (p@(OrdRef i op):ps) = do
+                            act <- _updateFun <$> readSimpleRef op
+                            ys <- filterM del =<< ch p      -- TODO: don't use ch here again, cache it
+                            acts <- topSort $ mergeBy (compare `on` _ordRefId) ps ys
                             return $ act >> acts
+                          where
+                            del (OrdRef _ n) = do
+                                ts <- modSimpleRef'' n $ \ts -> ts { _reverseDeps = Map.delete i $ _reverseDeps ts }
+                                return $ Map.null $ _reverseDeps ts
 
-                        del' (_, n) = readSimpleRef n <&> Map.null . _reverseDeps
+                    join $ topSort =<< filterM (fmap (Map.null . _reverseDeps) . readSimpleRef . _ordRefRef) as
 
-                    join $ topSort =<< filterM del' as
+                    join $ RefCreator $ \st -> modSimpleRef' (_postpone st) $ const $ return ()
 
-                    pr <- RefCreator $ return .  _postpone
+                return ih
 
-                    p <- readSimpleRef pr
-                    writeSimpleRef pr $ return ()
-                    p
+            when (rep && not (Map.null ih)) $ regTrigger p ih upd
 
-            when (rep && not (Map.null ih)) $ regTrigger (i, oir) ih ma
-
-    pure $ Ref $ \ff ->
-        buildRefAction ff am
-            (RefWriter . unsafeWriterToCreator False True . (return .))
-            (unsafeWriterToCreator True)
+    pure (p, Ref $ buildRefAction am ff)
 
 
 regTrigger :: forall m a . RefContext m => Id m -> Ids m -> (a -> RefCreator m a) -> RefCreator m ()
-regTrigger (i, oir) ih ma = do
+regTrigger p@(OrdRef _ oir) ih ma = do
 
     j <- newId
     ori <- newSimpleRef $ error "impossible"
 
-    let addRev, delRev :: SimpleRef m (RefState m) -> RefCreator m ()
-        addRev x = modSimpleRef x $ revDep %= Map.insert j ori
-        delRev x = modSimpleRef x $ revDep %= Map.delete j
+    let addRev x = modSimpleRef x $ revDep %~ Map.insert j ori
+        delRev x = modSimpleRef x $ revDep %~ Map.delete j
 
         modReg = do
+            rs@(RefState _ wr nas) <- RefCreator $ \st -> do
+                wr <- readSimpleRef (_writeCounter st)
+                modSimpleRef'' oir (setWr' wr)
+            (ih, a) <- getDependency $ ma $ unsafeGetVal rs
+            writeSimpleRef oir $ RefState a wr nas
 
-            RefState aold nas <- readSimpleRef oir
-
-            (ih, a) <- getDependency $ ma $ unsafeCoerce aold
-
-            writeSimpleRef oir $ RefState a nas
-
-            ts <- readSimpleRef ori
-            writeSimpleRef ori $ ts { _dependencies = ih }
+            ts <- modSimpleRef' ori $ \ts -> ts { _dependencies = ih }
             let ih' = _dependencies ts
 
             mapM_ delRev $ Map.elems $ ih' `Map.difference` ih
             mapM_ addRev $ Map.elems $ ih `Map.difference` ih'
 
-    writeSimpleRef ori $ TriggerState True (i, oir) ih modReg mempty
+    writeSimpleRef ori $ TriggerState
+        { _alive        = True
+        , _targetid     = p
+        , _dependencies = ih
+        , _updateFun    = modReg
+        , _reverseDeps  = mempty
+        }
 
     mapM_ addRev $ Map.elems ih
 
-    tellHand $ \msg -> do
-
-        ts <- readSimpleRef ori
-        writeSimpleRef ori $ ts { _alive = msg == Unblock }
-
-        when (msg == Kill) $
-            mapM_ delRev $ Map.elems $ _dependencies ts
-
-        pr <- RefCreator $ return . _postpone
+    tellHandler $ \msg -> do
+        ts <- modSimpleRef' ori $ \ts -> ts { _alive = msg == Unblock }
+        when (msg == Kill) $ mapM_ delRev $ Map.elems $ _dependencies ts
 
         -- TODO
-        when (msg == Unblock) $
-            modSimpleRef pr $ modify (>> _updateFun ts)
-
-readRef__ :: RefContext m => Ref m a -> RefCreator m a
-readRef__ r = readerToCreator $ readRef r
-
-newRef :: RefContext m => a -> RefCreator m (Ref m a)
-newRef a = newReference a
+        when (msg == Unblock) $ RefCreator $ \st ->
+            modSimpleRef (_postpone st) (>> _updateFun ts)
 
 extendRef :: RefContext m => Ref m b -> Lens' a b -> a -> RefCreator m (Ref m a)
 extendRef m k a0 = do
-    r <- newReference a0
+    (OrdRef i p, r) <- newRef_ a0
     -- TODO: remove getHandler?
     _ <- getHandler $ do
-        register r True $ \a -> readerToCreator $ readRef m <&> \b -> set k b a
-        register m False $ \_ -> readRef__ r <&> (^. k)
+        register r $ \a -> readerToCreator $ (\b -> set k b a) <$> readRef m
+        register' m (Map.singleton i p) $ readerToCreator $ (^. k) <$> readRef r
     return r
 
 onChange :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (RefReader m b)
@@ -305,23 +283,23 @@ onChange m f = do
         noDependency $ do
             h Kill
             getHandler $ f a
-    tellHand $ \msg -> do
+    tellHandler $ \msg -> do
         (h, _) <- readerToCreator r
         h msg
-    return $ r <&> snd
+    return $ snd <$> r
 
 
 onChange_ :: RefContext m => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
 onChange_ m f = do
-    r <- newReference (const $ pure (), error "impossible #3")
-    register r True $ \(h', _) -> do
+    r <- newRef (const $ pure (), error "impossible #3")
+    register r $ \(h', _) -> do
         a <- readerToCreator m
         noDependency $ do
             h' Kill
             (h, b) <- getHandler $ f a
             return (h, b)
-    tellHand $ \msg -> do
-        (h, _) <- readRef__ r
+    tellHandler $ \msg -> do
+        (h, _) <- readerToCreator $ readRef r
         h msg
 
     return $ lensMap _2 r
@@ -336,11 +314,11 @@ onChangeEq m f = do
             h Kill
             hb <- getHandler $ f a
             return ((== a), hb)
-    tellHand $ \msg -> do
+    tellHandler $ \msg -> do
         (_, (h, _)) <- readerToCreator r
         h msg
 
-    return $ r <&> snd . snd
+    return $ snd . snd <$> r
 
 onChangeEqOld :: (Eq a, RefContext m) => RefReader m a -> (a -> a -> RefCreator m b) -> RefCreator m (RefReader m b)
 onChangeEqOld m f = do
@@ -353,16 +331,16 @@ onChangeEqOld m f = do
             h Kill
             hb <- getHandler $ f x a
             return ((a, (== a)), hb)
-    tellHand $ \msg -> do
+    tellHandler $ \msg -> do
         (_, (h, _)) <- readerToCreator r
         h msg
 
-    return $ r <&> snd . snd
-{-
+    return $ snd . snd <$> r
+
 onChangeEqOld' :: (Eq a, RefContext m) => RefReader m a -> b -> (Ref m b -> a -> b -> RefCreator m b) -> RefCreator m (RefReader m b)
 onChangeEqOld' m b0 f = do
-    r <- newReference ((const False), (const $ pure (), b0))
-    register r True $ \it@(p, (h, b)) -> do
+    r <- newRef ((const False), (const $ pure (), b0))
+    register r $ \it@(p, (h, b)) -> do
         a <- readerToCreator m
         noDependency $ if p a
           then return it
@@ -370,16 +348,16 @@ onChangeEqOld' m b0 f = do
             h Kill
             hb <- getHandler $ f (lensMap (_2 . _2) r) a b
             return ((== a), hb)
-    tellHand $ \msg -> do
+    tellHandler $ \msg -> do
         (_, (h, _)) <- readerToCreator $ readRef r
         h msg
 
-    return $ readRef r <&> snd . snd
--}
+    return $ snd . snd <$> readRef r
+
 onChangeEq_ :: (Eq a, RefContext m) => RefReader m a -> (a -> RefCreator m b) -> RefCreator m (Ref m b)
 onChangeEq_ m f = do
-    r <- newReference (const False, (const $ pure (), error "impossible #3"))
-    register r True $ \it@(p, (h', _)) -> do
+    r <- newRef (const False, (const $ pure (), error "impossible #3"))
+    register r $ \it@(p, (h', _)) -> do
         a <- readerToCreator m
         noDependency $ if p a
           then return it
@@ -387,8 +365,8 @@ onChangeEq_ m f = do
             h' Kill
             (h, b) <- getHandler $ f a
             return ((== a), (h, b))
-    tellHand $ \msg -> do
-        (_, (h, _)) <- readRef__ r
+    tellHandler $ \msg -> do
+        (_, (h, _)) <- readerToCreator $ readRef r
         h msg
 
     return $ lensMap (_2 . _2) r
@@ -415,20 +393,19 @@ onChangeMemo mr f = do
                 (h2, b') <- getHandler m'
                 return (((== a), ((m',h1,h2), b')), it: memo)
 
-    tellHand $ \msg -> do
+    tellHandler $ \msg -> do
         ((_, ((_, h1, h2), _)), _) <- readerToCreator r
         h1 msg >> h2 msg
 
-    return $ r <&> snd . snd . fst
+    return $ snd . snd . fst <$> r
 
 onRegionStatusChange :: RefContext m => (RegionStatusChange -> m ()) -> RefCreator m ()
 onRegionStatusChange h
-    = tellHand $ lift . h
+    = onRegionStatusChange_ (return . h)
 
 onRegionStatusChange_ :: RefContext m => (RegionStatusChange -> RefReader m (m ())) -> RefCreator m ()
 onRegionStatusChange_ h
-    = tellHand $ join . fmap lift . readerToCreator . h
-
+    = tellHandler $ join . fmap lift . readerToCreator . h
 
 runRefCreator
     :: RefContext m
@@ -440,219 +417,167 @@ runRefCreator f = do
             <*> newSimpleRef mempty
             <*> newSimpleRef (return ())
             <*> newSimpleRef 0
-    flip unRefCreator s $ f $ flip unRefCreator s . runRefWriterT
+            <*> newSimpleRef 0
+    flip unRefCreator s $ f $ flip unRefCreator s . unsafeWriterToCreator
 
 -------------------- aux
 
-register :: RefContext m => Ref m a -> Bool -> (a -> HandT m a) -> RefCreator m ()
-register r init k = runRegisterAction (runRef r k) init
-
-tellHand :: RefContext m => Handler m -> RefCreator m ()
-tellHand h = do
-    r <- RefCreator $ return . _handlercollection
-    modSimpleRef r $ modify $ \f msg -> f msg >> h msg
+tellHandler :: RefContext m => Handler m -> RefCreator m ()
+tellHandler h = RefCreator $ \st -> modSimpleRef (_handlercollection st) (`mappend` h)
 
 getHandler :: RefContext m => RefCreator m a -> RefCreator m (Handler m, a)
-getHandler m = do
-    r <- RefCreator $ return . _handlercollection
-    h' <- readSimpleRef r
-    writeSimpleRef r $ const $ pure ()
-    a <- m
-    h <- readSimpleRef r
-    writeSimpleRef r h'
-    return (h, a)
-
-noDependency :: RefContext m => RefCreator m a -> RefCreator m a
-noDependency (RefCreator m) = RefCreator $ \st -> do
-    ih <- readSimpleRef $ _dependencycoll st
+getHandler (RefCreator m) = RefCreator $ \st -> do
+    h' <- modSimpleRef' (_handlercollection st) $ const $ const $ pure ()
     a <- m st
-    writeSimpleRef (_dependencycoll st) ih
-    return a
+    h <- modSimpleRef' (_handlercollection st) $ const h'
+    return (h, a)
 
 getDependency :: RefContext m => RefCreator m a -> RefCreator m (Ids m, a)
 getDependency (RefCreator m) = RefCreator $ \st -> do
-    ih' <- readSimpleRef $ _dependencycoll st       -- TODO: remove this
-    writeSimpleRef (_dependencycoll st) mempty
+    ih' <- modSimpleRef' (_dependencycoll st) $ const mempty
     a <- m st
-    ih <- readSimpleRef $ _dependencycoll st
-    writeSimpleRef (_dependencycoll st) ih'       -- TODO: remove this
+    ih <- modSimpleRef' (_dependencycoll st) $ const ih'
     return (ih, a)
 
+noDependency :: RefContext m => RefCreator m a -> RefCreator m a
+noDependency = fmap snd . getDependency
+
+newId' a = do
+    wr <- RefCreator $ \st -> readSimpleRef (_writeCounter st)
+    liftA2 OrdRef newId $ newSimpleRef $ RefState a wr mempty
+
 newId :: RefContext m => RefCreator m Int
-newId = RefCreator $ \(GlobalVars _ _ _ st) -> do
-    c <- readSimpleRef st
-    writeSimpleRef st $ succ c
-    return c
+newId = RefCreator $ \st -> modSimpleRef' (_counter st) succ
 
 revDep :: Lens' (RefState m) (TIds m)
-revDep k (RefState a b) = k b <&> \b' -> RefState a b'
+revDep k (RefState a wr b) = RefState a wr <$> k b
+
+currentValue :: RefContext m => RefReader m a -> RefReader m a
+currentValue = RefReader . noDependency . readerToCreator
+
+readerToWriter :: RefContext m => RefReader m a -> RefWriter m a
+readerToWriter = RefWriter . readerToCreator
+
+getVal (OrdRef i oir) = RefReader $ RefCreator $ \st -> do
+    modSimpleRef (_dependencycoll st) $ Map.insert i oir
+    wr <- readSimpleRef (_writeCounter st)
+    unsafeGetVal <$> modSimpleRef'' oir (setWr wr)
+
+setWr wr (RefState a _ x) = RefState a wr x
+
+setWr' wr r@(RefState _ wr' _)
+    | wr > wr' = setWr wr r
+    | otherwise = error $ "I can't schedule this trigger network; " ++ show wr' ++ " >= " ++ show wr
+
+unsafeGetVal :: RefState m -> a
+unsafeGetVal (RefState a _ _) = Unsafe.Coerce.unsafeCoerce a
+
+--------------------------------------------------------------------------------
+
+newtype Ref m a
+    = Ref { runRef :: forall f . (RefAction f, Functor (RefActionFunctor f), RefActionCreator f ~ m)
+                   => (a -> RefActionFunctor f a) -> f ()
+          }
+
+class RefAction f where
+    type RefActionFunctor f :: * -> *
+    type RefActionCreator f :: * -> *
+
+    joinRefAction :: RefReader (RefActionCreator f) (f ()) -> f ()
+    buildRefAction
+        :: RefReader (RefActionCreator f) a
+        -> (Bool -> (a -> RefCreator (RefActionCreator f) a) -> Maybe (Ids (RefActionCreator f)) -> RefCreator (RefActionCreator f) ())
+        -> (a -> RefActionFunctor f a) -> f ()
+
+-- | Apply a lens on a reference.
+lensMap :: Lens' a b -> Ref m a -> Ref m b
+lensMap k r = Ref $ runRef r . k
+
+-- | unit reference
+unitRef :: RefContext m => Ref m ()
+unitRef = Ref $ buildRefAction (pure ()) (\_ _ _ -> pure ())
+
+joinRef :: RefContext m => RefReader m (Ref m a) -> Ref m a
+joinRef mr = Ref $ joinRefAction . (<$> mr) . flip runRef
+
+writeRef :: RefContext m => Ref m a -> a -> RefWriter m ()
+writeRef r = runWriterAction . runRef r . const . Identity
+
+newtype WriterAction m a = WriterAction { runWriterAction :: RefWriter m () }
+
+instance RefContext m => RefAction (WriterAction m) where
+    type RefActionFunctor (WriterAction m) = Identity
+    type RefActionCreator (WriterAction m) = m
+    buildRefAction _   g = WriterAction . (\f -> RefWriter $ g False (pure . runIdentity . f) Nothing)
+    joinRefAction        = WriterAction . (>>= runWriterAction) . readerToWriter
+
+readRef :: RefContext m => Ref m a -> RefReader m a
+readRef r = runReaderAction $ runRef r Const
+
+newtype ReaderAction m b a = ReaderAction { runReaderAction :: RefReader m b }
+
+instance RefContext m => RefAction (ReaderAction m b) where
+    type RefActionFunctor (ReaderAction m b) = Const b
+    type RefActionCreator (ReaderAction m b) = m
+    buildRefAction a   _ = ReaderAction . (<$> a) . (getConst .)
+    joinRefAction        = ReaderAction . (>>= runReaderAction)
+
+-- TODO: optimize this
+-- | > modRef r f = readerToWriter (readRef r) >>= writeRef r . f
+modRef :: RefContext m => Ref m a -> (a -> a) -> RefWriter m ()
+r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
+
+register :: RefContext m => Ref m a -> (a -> RefCreator m a) -> RefCreator m ()
+register r k = runRegisterAction (runRef r k) Nothing
+
+register' :: RefContext m => Ref m a -> Ids m -> RefCreator m a -> RefCreator m ()
+register' r dep k = runRegisterAction (runRef r $ const k) (Just dep)
+
+newtype RegisterAction m a = RegisterAction { runRegisterAction :: Maybe (Ids m) -> RefCreator m a }
+
+instance RefContext m => RefAction (RegisterAction m) where
+    type RefActionFunctor (RegisterAction m) = RefCreator m
+    type RefActionCreator (RegisterAction m) = m
+    buildRefAction _   g = RegisterAction . g True
+    joinRefAction m      = RegisterAction $ \init -> do
+        r <- newReadReference (const $ pure ()) $ \kill -> do
+            kill Kill
+            noDependency . fmap fst . getHandler . ($ init) . runRegisterAction =<< readerToCreator m
+        tellHandler $ \msg -> readerToCreator r >>= ($ msg)
+
+--------------------------------------------------------------------------------
+
+memoRead :: RefContext m => RefCreator m a -> RefCreator m (RefCreator m a)
+memoRead g = do
+    s <- newRef Nothing
+    pure $ readerToCreator (readRef s) >>= \case
+        Just a -> pure a
+        Nothing -> g >>= \a -> a <$ unsafeWriterToCreator (writeRef s $ Just a)
 
 ------------------------------------------------------- type class instances
 
-instance RefContext m => Monoid (RefCreator m ()) where
-    mempty = return ()
-    m `mappend` n = m >> n
+instance MonadTrans RefWriter  where lift = RefWriter . lift
+instance MonadTrans RefCreator where lift = RefCreator . const
 
-instance RefContext m => Monad (RefCreator m) where
-    return = RefCreator . const . return
-    RefCreator m >>= f = RefCreator $ \r -> m r >>= \a -> unRefCreator (f a) r
+instance RefContext m => Functor (RefCreator m) where
+    fmap f (RefCreator m) = RefCreator $ fmap f . m
 
 instance RefContext m => Applicative (RefCreator m) where
     pure = RefCreator . const . pure
     RefCreator f <*> RefCreator g = RefCreator $ \r -> f r <*> g r
 
-instance RefContext m => Functor (RefCreator m) where
-    fmap f (RefCreator m) = RefCreator $ fmap f . m
+instance RefContext m => Monad (RefCreator m) where
+    return = RefCreator . const . return
+    RefCreator m >>= f = RefCreator $ \r -> m r >>= \a -> unRefCreator (f a) r
 
+-- TODO: move MonadFix instances to Unsafe module
 instance (RefContext m, MonadFix m) => MonadFix (RefCreator m) where
     mfix f = RefCreator $ \r -> mfix $ \a -> unRefCreator (f a) r
 
-currentValue :: RefContext m => RefReader m a -> RefReader m a
-currentValue = RefReader . noDependency . runRefReader
-
-readRef :: RefContext m => Ref m a -> RefReader m a
-readRef r = runReaderAction $ runRef r Const
-
-readerToCreator :: RefContext m => RefReader m a -> RefCreator m a
-readerToCreator = runRefReader
-
-readerToWriter :: RefContext m => RefReader m a -> RefWriter m a
-readerToWriter = RefWriter . readerToCreator
-
-instance MonadTrans RefWriter where
-    lift = RefWriter . lift
-
-instance MonadTrans RefCreator where
-    lift m = RefCreator $ \_ -> m
-
-unsafeWriterToCreator :: RefContext m => RefWriter m a -> RefCreator m a
-unsafeWriterToCreator = runRefWriterT
-
-------------------------
-
-newtype Ref m a = Ref { runRef :: Ref_ m a }
-
-type Ref_ m a =
-        forall f
-        .  (RefAction f, RefActionCreator f ~ m)
-        => (a -> RefActionFunctor f a)
-        -> f ()
-
-class ( Functor (RefActionFunctor f)
-      , RefContext (RefActionCreator f)
-      )
-    => RefAction (f :: * -> *) where
-
-    type RefActionFunctor f :: * -> *
-    type RefActionCreator f :: * -> *
-
-    buildRefAction
-        :: (a -> RefActionFunctor f a)
-        -> RefReader (RefActionCreator f) a
-        -> ((a -> a) -> RefWriter (RefActionCreator f) ())
-        -> RefRegOf (RefActionCreator f) a
-        -> f ()
-
-    joinRefAction :: RefReader (RefActionCreator f) (f ()) -> f ()
-
-    buildUnitRefAction :: (() -> RefActionFunctor f ()) -> f ()
-
-type RefRegOf m a = Bool -> (a -> HandT m a) -> RefCreator m ()
-
-
--------------------- reader action
-
-newtype ReaderAction b m a = ReaderAction { runReaderAction :: RefReader m b }
-
-instance RefContext m => RefAction (ReaderAction b m) where
-
-    type RefActionFunctor (ReaderAction b m) = Const b
-    type RefActionCreator (ReaderAction b m) = m
-
-    buildRefAction f a _ _ = ReaderAction $ a <&> getConst . f
-    joinRefAction m      = ReaderAction $ m >>= runReaderAction
-    buildUnitRefAction f = ReaderAction $ pure $ getConst $ f ()
-
-
--------------------- writer action
-
-newtype WriterAction m a = WriterAction { runWriterAction :: RefWriter m () }
-
-instance RefContext m => RefAction (WriterAction m) where
-
-    type RefActionFunctor (WriterAction m) = Identity
-    type RefActionCreator (WriterAction m) = m
-
-    buildRefAction f _ g _ = WriterAction $ g $ runIdentity . f
-    joinRefAction m = WriterAction $ readerToWriter m >>= runWriterAction
-    buildUnitRefAction _ = WriterAction $ pure ()
-
--------------------- register action
-
-newtype RegisterAction m a = RegisterAction { runRegisterAction :: Bool -> RefCreator m a }
-
-instance RefContext m => RefAction (RegisterAction m) where
-    type RefActionFunctor (RegisterAction m) = HandT m
-    type RefActionCreator (RegisterAction m) = m
-
-    buildRefAction f _ _ g = RegisterAction $ \init -> g init f
-    joinRefAction m = RegisterAction $ \init -> do
-
-        r <- newReadReference (const $ pure ()) $ \kill -> do
-            kill Kill
-            noDependency . fmap fst . getHandler . ($ init) . runRegisterAction =<< readerToCreator m
-        tellHand $ \msg -> readerToCreator r >>= ($ msg)
-
-    buildUnitRefAction _ = RegisterAction $ const $ pure ()
-
-
-
-infixr 8 `lensMap`
-
-{- | Apply a lens on a reference.
--}
-lensMap :: Lens' a b -> Ref m a -> Ref m b
-lensMap k (Ref r) = Ref $ r . k
-
-{- | unit reference
--}
-unitRef :: RefContext m => Ref m ()
-unitRef = Ref buildUnitRefAction
-
-joinRef :: RefContext m => RefReader m (Ref m a) -> Ref m a
-joinRef mr = Ref $ \f -> joinRefAction (mr <&> \r -> runRef r f)
-
-----------------------
-
-writeRef :: RefContext m => Ref m a -> a -> RefWriter m ()
-writeRef (Ref r) = runWriterAction . r . const . Identity
-
----------------- aux
-
-mergeBy :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
-mergeBy _ [] xs = xs
-mergeBy _ xs [] = xs
-mergeBy p (x:xs) (y:ys) = case p x y of
-    LT -> x: mergeBy p xs (y:ys)
-    GT -> y: mergeBy p (x:xs) ys
-    EQ -> x: mergeBy p xs ys
-
---------------------------------------------------------------------------------
-
--- | TODO
-data RegionStatusChange = Kill | Block | Unblock deriving (Eq, Ord, Show)
-
-modRef :: RefContext m => Ref m a -> (a -> a) -> RefWriter m ()
-r `modRef` f = readerToWriter (readRef r) >>= writeRef r . f
-
-memoRead :: RefContext m => RefCreator m a -> RefCreator m (RefCreator m a)
-memoRead g = do
-    s <- newRef Nothing
-    pure $ readerToCreator (readRef s) >>= \x -> case x of
-        Just a -> pure a
-        _ -> g >>= \a -> do
-            unsafeWriterToCreator $ writeRef s $ Just a
-            pure a
+-- TODO: remove this
+instance RefContext m => Monoid (RefCreator m ()) where
+    mempty = pure ()
+    m `mappend` n = m >> n
 
 --------------------------------------------------------------------------------
 
@@ -671,38 +596,25 @@ instance (RefContext s, Fractional a) => Fractional (RefReader s a) where
     recip  = fmap recip
     fromRational = pure . fromRational
 
-
 --------------------------------------------------------------------------------
 
-infixl 1 <&>
-
-{-# INLINE (<&>) #-}
-(<&>) :: Functor f => f a -> (a -> b) -> f b
-as <&> f = f <$> as
-
-----------------
-
 class (Monad m, Applicative m) => RefContext m where
-
-    -- simple reference
-    type SimpleRef m :: * -> *
-
+    type SimpleRef m :: * -> *   -- simple reference
     newSimpleRef   :: a -> m (SimpleRef m a)
     readSimpleRef  :: SimpleRef m a -> m a
     writeSimpleRef :: SimpleRef m a -> a -> m ()
 
-modSimpleRef :: RefContext m => SimpleRef m a -> StateT a m b -> m b
-modSimpleRef r s = do
-    a <- readSimpleRef r
-    (x, a') <- runStateT s a
-    writeSimpleRef r a'
-    return x
+modSimpleRef :: RefContext m => SimpleRef m a -> (a -> a) -> m ()
+modSimpleRef r f = readSimpleRef r >>= writeSimpleRef r . f
 
--------------------
+modSimpleRef' :: RefContext m => SimpleRef m a -> (a -> a) -> m a
+modSimpleRef' r f = readSimpleRef r >>= \a -> writeSimpleRef r (f a) >> return a
+
+modSimpleRef'' :: RefContext m => SimpleRef m a -> (a -> a) -> m a
+modSimpleRef'' r f = readSimpleRef r >>= \a -> let fa = f a in writeSimpleRef r fa >> return fa
 
 instance RefContext IO where
     type SimpleRef IO = IORef
-
 --    {-# INLINE newSimpleRef #-}
     newSimpleRef x = newIORef x
 --    {-# INLINE readSimpleRef #-}
@@ -712,19 +624,35 @@ instance RefContext IO where
 
 instance RefContext (ST s) where
     type SimpleRef (ST s) = STRef s
-    newSimpleRef = newSTRef
-    readSimpleRef = readSTRef
-    writeSimpleRef = writeSTRef
+    newSimpleRef    = newSTRef
+    readSimpleRef   = readSTRef
+    writeSimpleRef  = writeSTRef
 
 instance RefContext m => RefContext (ReaderT r m) where
     type SimpleRef (ReaderT r m) = SimpleRef m
-    newSimpleRef = lift . newSimpleRef
-    readSimpleRef = lift . readSimpleRef
+    newSimpleRef     = lift . newSimpleRef
+    readSimpleRef    = lift . readSimpleRef
     writeSimpleRef r = lift . writeSimpleRef r
 
 instance (RefContext m, Monoid w) => RefContext (WriterT w m) where
     type SimpleRef (WriterT w m) = SimpleRef m
-    newSimpleRef = lift . newSimpleRef
-    readSimpleRef = lift . readSimpleRef
+    newSimpleRef     = lift . newSimpleRef
+    readSimpleRef    = lift . readSimpleRef
     writeSimpleRef r = lift . writeSimpleRef r
+
+-- TODO: Is this needed? If not, move to Extra module
+instance RefContext m => RefContext (RefCreator m) where
+    type SimpleRef (RefCreator m) = SimpleRef m
+    newSimpleRef     = lift . newSimpleRef
+    readSimpleRef    = lift . readSimpleRef
+    writeSimpleRef r = lift . writeSimpleRef r
+
+-------------------------------------------------------------------------------- aux
+
+mergeBy :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
+mergeBy p (x:xs) (y:ys) = case p x y of
+    LT -> x: mergeBy p xs (y:ys)
+    GT -> y: mergeBy p (x:xs) ys
+    EQ -> x: mergeBy p xs ys
+mergeBy _ xs ys = xs ++ ys
 

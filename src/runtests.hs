@@ -1,5 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE LambdaCase #-}
 module Main where
 
 import Data.Maybe
@@ -47,7 +48,9 @@ runTests :: IO ()
 runTests = do
 
     let runTest :: String -> (forall s . RefCreator (Prog s) (RefWriter (Prog s) ())) -> IO ()
-        runTest name t = runProg name $ join $ runRefCreator $ \runRW -> runRW <$> t
+        runTest name t = do
+            putStrLn $ "running test " ++ name
+            runProg name $ join $ runRefCreator $ \runRW -> runRW <$> t
 
         a ==? b = when (a /= b) $ message $ show a ++ " /= " ++ show b
 
@@ -813,27 +816,26 @@ runTests = do
 
     runTest "issue4" $ do
         r <- newRef False
-        b <- onChange (readRef r) $ \b -> do
-          case b of
+        b <- onChange (readRef r) $ \case
             False -> pure $ pure True
             True -> do
                 r' <- onChange (readRef r) return
                 onChange r' return
 
-        void $ onChange (join b) $ const $ message "y"
+        void $ onChange (join b) $ message . show
 
         return $ do
-            message' "y"
+            message' "True"
             writeRef r True
-            message' "y"
+            message' "True"
             writeRef r False
-            message' "y"
+            message' "True"
 
     runTest "issue5" $ do
         r <- newRef True
-        w <- onChangeMemo (readRef r) $ \b -> if b
-            then fmap return $ onChange (readRef r) $ return . ("e" ++) . show
-            else return $ return $ return "F"
+        w <- onChangeMemo (readRef r) $ \case
+            True  -> fmap return $ onChange (readRef r) $ return . ("e" ++) . show
+            False -> return $ return $ return "F"
         void $ onChange (join w) message
         return $ do
             message' "eTrue"
@@ -841,12 +843,12 @@ runTests = do
             message' "F"
             writeRef r True
             message' "eTrue"
-{-
+
     runTest "issue6" $ do
         r <- newRef True
-        q <- onChangeMemo (readRef r) $ \b -> if b
-            then return $ return $ return True
-            else do
+        q <- onChangeMemo (readRef r) $ \case
+            True -> return $ return $ return True
+            False -> do
                 v <- extendRef r id undefined
                 return $ return $ readRef v
         void $ onChange (join q) $ message . show
@@ -861,9 +863,9 @@ runTests = do
 
     runTest "issue6b" $ do
         r <- newRef True
-        void $ onChangeMemo (readRef r) $ \b -> if b
-            then return $ return ()
-            else do
+        void $ onChangeMemo (readRef r) $ \case
+            True -> return $ return ()
+            False -> do
                 q <- extendRef r id undefined
                 return $ readerToCreator (readRef q) >>= message . show
         return $ do
@@ -872,7 +874,7 @@ runTests = do
             writeRef r True
             writeRef r False
             message' "False"
--}
+
     return ()
 
 
