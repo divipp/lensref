@@ -42,6 +42,7 @@ library
                   , lens-family
 
   exposed-modules:  LensRef
+                    LensRef.BruteForce
                     LensRef.Demo.Simple
                     LensRef.Demo.SevenGUIs
 
