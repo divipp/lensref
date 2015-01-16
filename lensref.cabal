@@ -39,14 +39,14 @@ library
   build-depends:    base < 5
                   , mtl < 2.3
                   , containers < 0.6
-                  , operational
-                  , lens
-                  , lens-family
+                  , lens-family < 1.3
 
   exposed-modules:  LensRef
-                    LensRef.BruteForce
-                    LensRef.Demo.Simple
-                    LensRef.Demo.SevenGUIs
+                    LensRef.Elerea
+                    LensRef.Test
+  other-modules:    Utils
+--                    LensRef.Demo.Simple
+--                    LensRef.Demo.SevenGUIs
 
   ghc-options:      -Wall
                     -fwarn-incomplete-record-updates
